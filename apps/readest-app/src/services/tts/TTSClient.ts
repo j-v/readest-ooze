@@ -26,4 +26,5 @@ export interface TTSClient {
   getGranularities(): TTSGranularity[];
   getVoiceId(): string;
   getSpeakingLang(): string;
+  setContext?(bookHash: string, sectionHref: string, voiceId: string, lang?: string): void;
 }

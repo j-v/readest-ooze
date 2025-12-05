@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import React, { useCallback, useState, useEffect } from 'react';
+import React, { useCallback, useState } from 'react';
 import { ListChildComponentProps } from 'react-window';
 import { MdCheckCircle, MdDownload, MdDelete, MdAccessTime } from 'react-icons/md';
 import { TOCItem } from '@/libs/document';

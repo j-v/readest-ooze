@@ -7,6 +7,7 @@ import { createRejectFilter } from '@/utils/node';
 import { WebSpeechClient } from './WebSpeechClient';
 import { NativeTTSClient } from './NativeTTSClient';
 import { EdgeTTSClient } from './EdgeTTSClient';
+import { OfflineTTSClient } from './OfflineTTSClient';
 import { TTSUtils } from './TTSUtils';
 import { TTSClient } from './TTSClient';
 
@@ -35,6 +36,7 @@ export class TTSController extends EventTarget {
   ttsClient: TTSClient;
   ttsWebClient: TTSClient;
   ttsEdgeClient: TTSClient;
+  ttsOfflineClient: TTSClient;
   ttsNativeClient: TTSClient | null = null;
   ttsWebVoices: TTSVoice[] = [];
   ttsEdgeVoices: TTSVoice[] = [];
@@ -47,6 +49,7 @@ export class TTSController extends EventTarget {
     super();
     this.ttsWebClient = new WebSpeechClient(this);
     this.ttsEdgeClient = new EdgeTTSClient(this);
+    this.ttsOfflineClient = new OfflineTTSClient(this);
     // TODO: implement native TTS client for iOS and PC
     if (appService?.isAndroidApp) {
       this.ttsNativeClient = new NativeTTSClient(this);
@@ -58,6 +61,9 @@ export class TTSController extends EventTarget {
 
   async init() {
     const availableClients = [];
+    if (await this.ttsOfflineClient.init()) {
+      availableClients.push(this.ttsOfflineClient);
+    }
     if (await this.ttsEdgeClient.init()) {
       availableClients.push(this.ttsEdgeClient);
     }
@@ -94,6 +100,32 @@ export class TTSController extends EventTarget {
   #clearHighlighter() {
     const { overlayer } = (this.view.renderer.getContents()?.[0] || {}) as { overlayer: Overlayer };
     overlayer?.remove(HIGHLIGHT_KEY);
+  }
+
+  /**
+   * Try to use offline audio playback if available, otherwise use active TTS client
+   * This method should be called before speak() when offline audio might be available
+   */
+  async tryUseOfflineAudio(
+    bookHash: string,
+    sectionHref: string,
+    voiceId: string,
+    lang?: string,
+  ): Promise<boolean> {
+    if (!this.ttsOfflineClient.setContext) {
+      return false;
+    }
+    this.ttsOfflineClient.setContext(bookHash, sectionHref, voiceId, lang);
+    return true;
+  }
+
+  /**
+   * Revert to the primary TTS client (not offline)
+   */
+  disableOfflineAudio(): void {
+    if (this.ttsClient.name === 'offline-tts') {
+      this.ttsClient = this.ttsEdgeClient.initialized ? this.ttsEdgeClient : this.ttsWebClient;
+    }
   }
 
   async initViewTTS(options?: TTSHighlightOptions) {
@@ -391,6 +423,9 @@ export class TTSController extends EventTarget {
   async shutdown() {
     await this.stop();
     this.#clearHighlighter();
+    if (this.ttsOfflineClient.initialized) {
+      await this.ttsOfflineClient.shutdown();
+    }
     if (this.ttsWebClient.initialized) {
       await this.ttsWebClient.shutdown();
     }

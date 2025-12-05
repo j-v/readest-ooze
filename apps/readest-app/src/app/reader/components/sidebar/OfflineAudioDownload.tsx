@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import clsx from 'clsx';
 import { MdDownload, MdClose, MdCheckCircle, MdError, MdDelete } from 'react-icons/md';
 import { useTranslation } from '@/hooks/useTranslation';
 import { offlineAudioManager } from '@/services/tts/OfflineAudioManager';
@@ -13,7 +12,7 @@ interface OfflineAudioDownloadProps {
 
 const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, onClose }) => {
   const _ = useTranslation();
-  const { getView, getViewSettings } = useReaderStore();
+  const { getView } = useReaderStore();
 
   const [isDownloading, setIsDownloading] = useState(false);
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
@@ -23,7 +22,6 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
 
   const view = getView(bookKey);
   const bookDoc = view?.book || null;
-  const viewSettings = getViewSettings(bookKey);
 
   // Extract stable book identifier (metaHash) instead of dynamic bookKey
   const bookId = bookKey.split('-')[0]!;
@@ -89,7 +87,6 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
       setIsDownloading(false);
       setAbortController(null);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookDoc, bookId]);
 
   const handleCancel = useCallback(() => {

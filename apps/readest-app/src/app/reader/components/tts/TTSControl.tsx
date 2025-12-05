@@ -8,6 +8,7 @@ import { useReaderStore } from '@/store/readerStore';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useResponsiveSize } from '@/hooks/useResponsiveSize';
 import { TTSController, SILENCE_DATA, TTSMark } from '@/services/tts';
+import { offlineAudioManager } from '@/services/tts/OfflineAudioManager';
 import { getMediaSession, TauriMediaSession } from '@/libs/mediaSession';
 import { getPopupPosition, Position } from '@/utils/sel';
 import { eventDispatcher } from '@/utils/event';
@@ -337,6 +338,30 @@ const TTSControl: React.FC<TTSControlProps> = ({ bookKey, gridInsets }) => {
 
         ttsController.setLang(lang);
         ttsController.setRate(viewSettings.ttsRate);
+
+        // Check if offline audio is available for current section and try to use it
+        try {
+          const bookId = bookKey.split('-')[0]!;
+          const voiceId = 'en-US-AriaNeural'; // TODO: Get from settings
+          const currentHref = progress?.sectionHref || '';
+
+          if (currentHref && bookId) {
+            await offlineAudioManager.init();
+            const status = await offlineAudioManager.getStatus(bookId, voiceId);
+
+            // Check if offline audio is available for this section
+            if (status.downloadedHrefs.has(currentHref)) {
+              console.log('Using offline audio for section:', currentHref);
+              await ttsController.tryUseOfflineAudio(bookId, currentHref, voiceId, lang);
+              // Set client to offline for this playback
+              ttsController.ttsClient = ttsController.ttsOfflineClient;
+            }
+          }
+        } catch (err) {
+          console.error('Error checking offline audio availability:', err);
+          // Continue with default TTS client on error
+        }
+
         ttsController.speak(ssml);
         ttsController.setTargetLang(getTTSTargetLang() || '');
         ttsControllerRef.current = ttsController;
