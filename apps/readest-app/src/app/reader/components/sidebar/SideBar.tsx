@@ -15,12 +15,14 @@ import { DragKey, useDrag } from '@/hooks/useDrag';
 import { useThemeStore } from '@/store/themeStore';
 import { Overlay } from '@/components/Overlay';
 import useShortcuts from '@/hooks/useShortcuts';
+import ModalPortal from '@/components/ModalPortal';
 import SidebarHeader from './Header';
 import SidebarContent from './Content';
 import BookCard from './BookCard';
 import useSidebar from '../../hooks/useSidebar';
 import SearchBar from './SearchBar';
 import SearchResults from './SearchResults';
+import OfflineAudioDownload from './OfflineAudioDownload';
 
 const MIN_SIDEBAR_WIDTH = 0.05;
 const MAX_SIDEBAR_WIDTH = 0.45;
@@ -40,6 +42,7 @@ const SideBar: React.FC<{
   const [isSearchBarVisible, setIsSearchBarVisible] = useState(false);
   const [searchResults, setSearchResults] = useState<BookSearchResult[] | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [showOfflineAudioDialog, setShowOfflineAudioDialog] = useState(false);
   const searchTermRef = useRef(searchTerm);
   const sidebarHeight = useRef(1.0);
   const isMobile = window.innerWidth < 640;
@@ -308,6 +311,7 @@ const SideBar: React.FC<{
             onClose={() => setSideBarVisible(false)}
             onTogglePin={handleSideBarTogglePin}
             onToggleSearchBar={handleToggleSearchBar}
+            onShowOfflineAudio={() => setShowOfflineAudioDialog(true)}
           />
           <div
             className={clsx('search-bar', {
@@ -336,6 +340,16 @@ const SideBar: React.FC<{
           <SidebarContent bookDoc={bookDoc} sideBarBookKey={sideBarBookKey!} />
         )}
       </div>
+
+      {/* Offline Audio Dialog */}
+      {showOfflineAudioDialog && sideBarBookKey && (
+        <ModalPortal>
+          <OfflineAudioDownload
+            bookKey={sideBarBookKey}
+            onClose={() => setShowOfflineAudioDialog(false)}
+          />
+        </ModalPortal>
+      )}
     </>
   ) : null;
 };

@@ -1,6 +1,7 @@
 import clsx from 'clsx';
 import React, { useCallback } from 'react';
 import { ListChildComponentProps } from 'react-window';
+import { MdCheckCircle } from 'react-icons/md';
 import { TOCItem } from '@/libs/document';
 import { getContentMd5 } from '@/utils/misc';
 
@@ -34,9 +35,10 @@ const TOCItemView = React.memo<{
   flatItem: FlatTOCItem;
   itemSize?: number;
   isActive: boolean;
+  isDownloaded?: boolean;
   onToggleExpand: (item: TOCItem) => void;
   onItemClick: (item: TOCItem) => void;
-}>(({ flatItem, itemSize, isActive, onToggleExpand, onItemClick }) => {
+}>(({ flatItem, itemSize, isActive, isDownloaded, onToggleExpand, onItemClick }) => {
   const { item, depth } = flatItem;
 
   const handleToggleExpand = useCallback(
@@ -101,7 +103,14 @@ const TOCItemView = React.memo<{
       >
         {item.label}
       </div>
-      {item.location && (
+      {isDownloaded && (
+        <MdCheckCircle 
+          className='text-success ms-2 flex-shrink-0' 
+          title='Downloaded for offline listening'
+          size={16}
+        />
+      )}
+            {item.location && (
         <div className='text-base-content/50 ms-auto ps-1 text-xs sm:pe-1'>
           {item.location.current + 1}
         </div>
@@ -111,12 +120,12 @@ const TOCItemView = React.memo<{
 });
 
 TOCItemView.displayName = 'TOCItemView';
-
 interface ListRowProps {
   bookKey: string;
   flatItem: FlatTOCItem;
   itemSize?: number;
   activeHref: string | null;
+  downloadedHrefs?: Set<string>;
   onToggleExpand: (item: TOCItem) => void;
   onItemClick: (item: TOCItem) => void;
 }
@@ -126,10 +135,13 @@ export const StaticListRow: React.FC<ListRowProps> = ({
   flatItem,
   itemSize,
   activeHref,
+  downloadedHrefs,
   onToggleExpand,
   onItemClick,
 }) => {
   const isActive = activeHref === flatItem.item.href;
+  const isDownloaded = downloadedHrefs?.has(flatItem.item.href) || false;
+
 
   return (
     <div
@@ -144,6 +156,7 @@ export const StaticListRow: React.FC<ListRowProps> = ({
         flatItem={flatItem}
         itemSize={itemSize}
         isActive={isActive}
+        isDownloaded={isDownloaded}
         onToggleExpand={onToggleExpand}
         onItemClick={onItemClick}
       />
@@ -158,12 +171,13 @@ export const VirtualListRow: React.FC<
       flatItems: FlatTOCItem[];
       itemSize: number;
       activeHref: string | null;
+      downloadedHrefs?: Set<string>;
       onToggleExpand: (item: TOCItem) => void;
       onItemClick: (item: TOCItem) => void;
     };
   }
 > = ({ index, style, data }) => {
-  const { flatItems, bookKey, activeHref, itemSize, onToggleExpand, onItemClick } = data;
+  const { flatItems, bookKey, activeHref, itemSize, downloadedHrefs, onToggleExpand, onItemClick } = data;
   const flatItem = flatItems[index];
 
   return (
@@ -173,6 +187,7 @@ export const VirtualListRow: React.FC<
         flatItem={flatItem}
         itemSize={itemSize - 1}
         activeHref={activeHref}
+        downloadedHrefs={downloadedHrefs}
         onToggleExpand={onToggleExpand}
         onItemClick={onItemClick}
       />

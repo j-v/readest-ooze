@@ -12,6 +12,7 @@ import { eventDispatcher } from '@/utils/event';
 import { getContentMd5 } from '@/utils/misc';
 import { useTextTranslation } from '../../hooks/useTextTranslation';
 import { FlatTOCItem, StaticListRow, VirtualListRow } from './TOCItem';
+import { offlineAudioManager } from '@/services/tts/OfflineAudioManager';
 
 const getItemIdentifier = (item: TOCItem) => {
   const href = item.href || '';
@@ -49,6 +50,7 @@ const TOCView: React.FC<{
 
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [containerHeight, setContainerHeight] = useState(400);
+  const [downloadedHrefs, setDownloadedHrefs] = useState<Set<string>>(new Set());
 
   const hasInteractedWithTOCRef = useRef(false);
   const lastInteractionTimeRef = useRef<number>(0);
@@ -153,6 +155,27 @@ const TOCView: React.FC<{
       }
     }
 
+    // Load downloaded hrefs
+    const loadDownloadedHrefs = async () => {
+      try {
+        await offlineAudioManager.init();
+        const voiceId = 'en-US-AriaNeural'; // TODO: Get from settings
+        const status = await offlineAudioManager.getStatus(bookKey, voiceId);
+        setDownloadedHrefs(status.downloadedHrefs);
+      } catch (err) {
+        console.error('Error loading downloaded hrefs:', err);
+      }
+    };
+    loadDownloadedHrefs();
+
+    // Listen for download events to update checkmarks
+    const handleDownloadUpdate = () => {
+      loadDownloadedHrefs();
+    };
+    offlineAudioManager.addEventListener('download-progress', handleDownloadUpdate);
+    offlineAudioManager.addEventListener('download-complete', handleDownloadUpdate);
+    offlineAudioManager.addEventListener('download-deleted', handleDownloadUpdate);
+
     return () => {
       window.removeEventListener('resize', updateHeight);
       if (resizeObserver) {
@@ -161,8 +184,11 @@ const TOCView: React.FC<{
       if (scrollContainer) {
         scrollContainer.removeEventListener('scroll', handleInteraction);
       }
+      offlineAudioManager.removeEventListener('download-progress', handleDownloadUpdate);
+      offlineAudioManager.removeEventListener('download-complete', handleDownloadUpdate);
+      offlineAudioManager.removeEventListener('download-deleted', handleDownloadUpdate);
     };
-  }, [expandedItems, handleInteraction]);
+  }, [expandedItems, handleInteraction, bookKey]);
 
   const activeHref = useMemo(() => progress?.sectionHref || null, [progress?.sectionHref]);
   const flatItems = useFlattenedTOC(toc, expandedItems);
@@ -241,10 +267,11 @@ const TOCView: React.FC<{
       itemSize: virtualItemSize,
       bookKey,
       activeHref,
+      downloadedHrefs,
       onToggleExpand: handleToggleExpand,
       onItemClick: handleItemClick,
     }),
-    [flatItems, virtualItemSize, bookKey, activeHref, handleToggleExpand, handleItemClick],
+    [flatItems, virtualItemSize, bookKey, activeHref, downloadedHrefs, handleToggleExpand, handleItemClick],
   );
 
   useEffect(() => {
@@ -300,6 +327,7 @@ const TOCView: React.FC<{
           bookKey={bookKey}
           flatItem={flatItem}
           activeHref={activeHref}
+          downloadedHrefs={downloadedHrefs}
           onToggleExpand={handleToggleExpand}
           onItemClick={handleItemClick}
         />
@@ -308,3 +336,4 @@ const TOCView: React.FC<{
   );
 };
 export default TOCView;
+

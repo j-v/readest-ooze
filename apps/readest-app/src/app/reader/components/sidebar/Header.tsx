@@ -17,7 +17,8 @@ const SidebarHeader: React.FC<{
   onClose: () => void;
   onTogglePin: () => void;
   onToggleSearchBar: () => void;
-}> = ({ isPinned, isSearchBarVisible, onGoToLibrary, onClose, onTogglePin, onToggleSearchBar }) => {
+  onShowOfflineAudio?: () => void;
+}> = ({ isPinned, isSearchBarVisible, onGoToLibrary, onClose, onTogglePin, onToggleSearchBar, onShowOfflineAudio }) => {
   const _ = useTranslation();
   const { isTrafficLightVisible } = useTrafficLight();
   const iconSize14 = useResponsiveSize(14);
@@ -69,7 +70,7 @@ const SidebarHeader: React.FC<{
           buttonClassName='btn btn-ghost h-8 min-h-8 w-8 p-0'
           toggleButton={<MdOutlineMenu className='fill-base-content' />}
         >
-          <BookMenu />
+          <BookMenu onShowOfflineAudio={onShowOfflineAudio} />
         </Dropdown>
         <div className='right-0 hidden h-8 w-8 items-center justify-center sm:flex'>
           <button
