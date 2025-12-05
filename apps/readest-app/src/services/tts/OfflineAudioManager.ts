@@ -93,6 +93,97 @@ class OfflineAudioManager extends EventTarget {
   }
 
   /**
+   * Segment text using Intl.Segmenter (same as foliate-js TTS)
+   * Returns segments with metadata for mapping back to original text
+   */
+  private segmentText(
+    text: string,
+    lang: string,
+    granularity: 'sentence' | 'word' = 'sentence',
+  ): Array<{ text: string; offset: number; index: number }> {
+    const segmenter = new Intl.Segmenter(lang, { granularity });
+    const segments: Array<{ text: string; offset: number; index: number }> = [];
+    
+    const cleanText = text.replace(/\r\n/g, '  ').replace(/\r/g, ' ').replace(/\n/g, ' ');
+    const rawSegments = Array.from(segmenter.segment(cleanText));
+    
+    // Merge segments that end with abbreviations followed by capitalized words
+    // This prevents splitting sentences like "Dr. Smith went..." into multiple segments
+    const mergedSegments = [];
+    for (let i = 0; i < rawSegments.length; i++) {
+      const current = rawSegments[i]!;
+      const next = rawSegments[i + 1];
+      const segment = current.segment.trim();
+      const nextSegment = next?.segment?.trim();
+      
+      const endsWithAbbr = /(?:^|\s)([A-Z][a-z]{1,5})\.$/.test(segment);
+      const nextStartsWithCapital = /^[A-Z]/.test(nextSegment || '');
+      
+      if (endsWithAbbr && nextStartsWithCapital && next) {
+        mergedSegments.push({
+          index: current.index,
+          segment: current.segment + next.segment,
+        });
+        i++; // Skip the next segment since we merged it
+      } else {
+        mergedSegments.push({
+          index: current.index,
+          segment: current.segment,
+        });
+      }
+    }
+    
+    // Filter and collect meaningful segments
+    let segmentIndex = 0;
+    for (const { index, segment } of mergedSegments) {
+      const trimmed = segment.trim();
+      if (trimmed) {
+        segments.push({
+          text: trimmed,
+          offset: index,
+          index: segmentIndex++,
+        });
+      }
+    }
+    
+    return segments;
+  }
+
+  /**
+   * Chunk segments into groups that fit within TTS character limits
+   * Preserves segment boundaries for proper mapping
+   */
+  private chunkSegments(
+    segments: Array<{ text: string; offset: number; index: number }>,
+    maxChars: number = 3000,
+  ): Array<Array<{ text: string; offset: number; index: number }>> {
+    const chunks: Array<Array<{ text: string; offset: number; index: number }>> = [];
+    let currentChunk: Array<{ text: string; offset: number; index: number }> = [];
+    let currentLength = 0;
+    
+    for (const segment of segments) {
+      const segmentLength = segment.text.length;
+      
+      // If adding this segment would exceed the limit and we have segments, start a new chunk
+      if (currentLength + segmentLength > maxChars && currentChunk.length > 0) {
+        chunks.push(currentChunk);
+        currentChunk = [segment];
+        currentLength = segmentLength;
+      } else {
+        currentChunk.push(segment);
+        currentLength += segmentLength;
+      }
+    }
+    
+    // Add the last chunk if it has content
+    if (currentChunk.length > 0) {
+      chunks.push(currentChunk);
+    }
+    
+    return chunks;
+  }
+
+  /**
    * Download audio for a single section
    */
   private async downloadSection(
@@ -109,32 +200,22 @@ class OfflineAudioManager extends EventTarget {
       return;
     }
 
-    // Split text into chunks (Edge TTS has limits on text length)
-    const MAX_CHARS = 3000;
-    const chunks: string[] = [];
+    // Segment text using Intl.Segmenter (same approach as foliate-js TTS)
+    const segments = this.segmentText(text, lang, 'sentence');
     
-    // Simple sentence-based chunking
-    const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
-    let currentChunk = '';
-    
-    for (const sentence of sentences) {
-      if (currentChunk.length + sentence.length > MAX_CHARS && currentChunk) {
-        chunks.push(currentChunk.trim());
-        currentChunk = sentence;
-      } else {
-        currentChunk += sentence;
-      }
-    }
-    if (currentChunk) {
-      chunks.push(currentChunk.trim());
-    }
+    // Chunk segments to fit within TTS limits while preserving sentence boundaries
+    const chunks = this.chunkSegments(segments, 3000);
 
     // Download audio for each chunk
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i]!;
+    for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+      const chunk = chunks[chunkIndex]!;
+      
+      // Join segments in this chunk with spaces
+      const chunkText = chunk.map(seg => seg.text).join(' ');
+      
       const payload: EdgeTTSPayload = {
         lang,
-        text: chunk,
+        text: chunkText,
         voice: voiceId,
         rate,
         pitch,
@@ -146,8 +227,15 @@ class OfflineAudioManager extends EventTarget {
         const arrayBuffer = await response.arrayBuffer();
         const audioBlob = new Blob([arrayBuffer], { type: 'audio/mpeg' });
         
-        // Store with chunk index to maintain order
-        const chunkHref = chunks.length > 1 ? `${href}#chunk-${i}` : href;
+        // Store with chunk metadata for later playback mapping
+        const chunkHref = chunks.length > 1 ? `${href}#chunk-${chunkIndex}` : href;
+        
+        // Store segment metadata as JSON string for later mapping
+        const segmentMetadata = chunk.map(seg => ({
+          text: seg.text,
+          offset: seg.offset,
+          index: seg.index,
+        }));
         
         await offlineAudioStorage.saveAudio({
           bookHash,
@@ -156,13 +244,13 @@ class OfflineAudioManager extends EventTarget {
           audioBlob,
           rate,
           pitch,
-          text: chunk,
-          ssml: chunk,
+          text: chunkText,
+          ssml: JSON.stringify(segmentMetadata), // Store segment metadata for playback
           downloadedAt: Date.now(),
           size: audioBlob.size,
         });
       } catch (error) {
-        console.error('Error downloading audio chunk:', i, error);
+        console.error('Error downloading audio chunk:', chunkIndex, error);
         throw error;
       }
     }
