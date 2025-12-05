@@ -18,6 +18,19 @@ export interface DownloadOptions {
   signal?: AbortSignal;
 }
 
+export interface DownloadSectionOptions {
+  bookHash: string;
+  bookDoc: BookDoc;
+  tocItem: TOCItem;
+  voiceId: string;
+  rate: number;
+  pitch: number;
+  primaryLang: string;
+  targetLang?: string;
+  onProgress?: (downloaded: number, total: number) => void;
+  signal?: AbortSignal;
+}
+
 export interface DownloadStatus {
   inProgress: boolean;
   progress: DownloadProgress | null;
@@ -254,6 +267,65 @@ class OfflineAudioManager extends EventTarget {
         throw error;
       }
     }
+
+    // Mark section as complete
+    await offlineAudioStorage.markSectionComplete(bookHash, href, voiceId, chunks.length);
+  }
+
+  /**
+   * Download audio for a single section/chapter
+   */
+  async downloadSingleSection(options: DownloadSectionOptions): Promise<void> {
+    const {
+      bookHash,
+      bookDoc,
+      tocItem,
+      voiceId,
+      rate,
+      pitch,
+      primaryLang,
+      targetLang,
+      onProgress,
+      signal: _signal,
+    } = options;
+
+    const { href } = tocItem;
+    if (!href) {
+      throw new Error('TOC item has no href');
+    }
+
+    // Check if already fully downloaded
+    const isComplete = await offlineAudioStorage.isSectionComplete(bookHash, href, voiceId);
+    if (isComplete) {
+      onProgress?.(1, 1);
+      return;
+    }
+
+    try {
+      const text = await this.getSectionText(bookDoc, href);
+      const lang = targetLang || primaryLang;
+      
+      onProgress?.(0, 1);
+      await this.downloadSection(bookHash, href, text, voiceId, lang, rate, pitch);
+      onProgress?.(1, 1);
+
+      this.dispatchEvent(
+        new CustomEvent('section-download-complete', {
+          detail: { bookHash, href },
+        }),
+      );
+    } catch (error) {
+      this.dispatchEvent(
+        new CustomEvent('section-download-error', {
+          detail: {
+            bookHash,
+            href,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        }),
+      );
+      throw error;
+    }
   }
 
   /**
@@ -402,7 +474,7 @@ class OfflineAudioManager extends EventTarget {
    */
   async getStatus(bookHash: string, voiceId: string): Promise<DownloadStatus> {
     const progress = await offlineAudioStorage.getProgress(bookHash);
-    const downloadedHrefs = await offlineAudioStorage.getDownloadedHrefs(bookHash, voiceId);
+    const downloadedHrefs = await offlineAudioStorage.getCompletedSections(bookHash, voiceId);
 
     return {
       inProgress: this.activeDownloads.has(bookHash),
@@ -422,6 +494,33 @@ class OfflineAudioManager extends EventTarget {
     this.dispatchEvent(
       new CustomEvent('download-deleted', {
         detail: { bookHash },
+      }),
+    );
+  }
+
+  /**
+   * Delete downloaded audio for a single section
+   */
+  async deleteSingleSection(bookHash: string, href: string, voiceId: string): Promise<void> {
+    // Get all audio chunks for this href (including chunk-0, chunk-1, etc.)
+    const allAudio = await offlineAudioStorage.getBookAudio(bookHash);
+    const hrefAudio = allAudio.filter(
+      (record) =>
+        record.voiceId === voiceId &&
+        (record.href === href || record.href.startsWith(`${href}#chunk-`)),
+    );
+
+    // Delete all chunks
+    for (const record of hrefAudio) {
+      await offlineAudioStorage.deleteAudio(bookHash, record.href, voiceId);
+    }
+
+    // Delete completion status
+    await offlineAudioStorage.deleteSectionCompletion(bookHash, href, voiceId);
+
+    this.dispatchEvent(
+      new CustomEvent('section-download-deleted', {
+        detail: { bookHash, href },
       }),
     );
   }

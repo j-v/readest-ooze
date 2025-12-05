@@ -48,9 +48,13 @@ const TOCView: React.FC<{
   const viewSettings = getViewSettings(bookKey)!;
   const progress = getProgress(bookKey);
 
+  // Extract stable book identifier (metaHash) instead of dynamic bookKey
+  const bookId = bookKey.split('-')[0]!;
+
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [containerHeight, setContainerHeight] = useState(400);
   const [downloadedHrefs, setDownloadedHrefs] = useState<Set<string>>(new Set());
+  const [downloadingHrefs, setDownloadingHrefs] = useState<Set<string>>(new Set());
 
   const hasInteractedWithTOCRef = useRef(false);
   const lastInteractionTimeRef = useRef<number>(0);
@@ -160,7 +164,7 @@ const TOCView: React.FC<{
       try {
         await offlineAudioManager.init();
         const voiceId = 'en-US-AriaNeural'; // TODO: Get from settings
-        const status = await offlineAudioManager.getStatus(bookKey, voiceId);
+        const status = await offlineAudioManager.getStatus(bookId, voiceId);
         setDownloadedHrefs(status.downloadedHrefs);
       } catch (err) {
         console.error('Error loading downloaded hrefs:', err);
@@ -175,6 +179,8 @@ const TOCView: React.FC<{
     offlineAudioManager.addEventListener('download-progress', handleDownloadUpdate);
     offlineAudioManager.addEventListener('download-complete', handleDownloadUpdate);
     offlineAudioManager.addEventListener('download-deleted', handleDownloadUpdate);
+    offlineAudioManager.addEventListener('section-download-complete', handleDownloadUpdate);
+    offlineAudioManager.addEventListener('section-download-deleted', handleDownloadUpdate);
 
     return () => {
       window.removeEventListener('resize', updateHeight);
@@ -187,8 +193,10 @@ const TOCView: React.FC<{
       offlineAudioManager.removeEventListener('download-progress', handleDownloadUpdate);
       offlineAudioManager.removeEventListener('download-complete', handleDownloadUpdate);
       offlineAudioManager.removeEventListener('download-deleted', handleDownloadUpdate);
+      offlineAudioManager.removeEventListener('section-download-complete', handleDownloadUpdate);
+      offlineAudioManager.removeEventListener('section-download-deleted', handleDownloadUpdate);
     };
-  }, [expandedItems, handleInteraction, bookKey]);
+  }, [expandedItems, handleInteraction, bookId]);
 
   const activeHref = useMemo(() => progress?.sectionHref || null, [progress?.sectionHref]);
   const flatItems = useFlattenedTOC(toc, expandedItems);
@@ -221,6 +229,56 @@ const TOCView: React.FC<{
       }
     },
     [bookKey, getView],
+  );
+
+  const handleDownloadSection = useCallback(
+    async (item: TOCItem) => {
+      if (!item.href) return;
+      
+      setDownloadingHrefs((prev) => new Set([...prev, item.href!]));
+      
+      try {
+        await offlineAudioManager.init();
+        const view = getView(bookKey);
+        if (!view?.book) {
+          console.error('Book not found');
+          return;
+        }
+        const voiceId = 'en-US-AriaNeural'; // TODO: Get from settings
+        await offlineAudioManager.downloadSingleSection({
+          bookHash: bookId,
+          bookDoc: view.book,
+          tocItem: item,
+          voiceId,
+          rate: 1.0,
+          pitch: 1.0,
+          primaryLang: 'en',
+        });
+      } catch (err) {
+        console.error('Error downloading section:', err);
+      } finally {
+        setDownloadingHrefs((prev) => {
+          const next = new Set(prev);
+          next.delete(item.href!);
+          return next;
+        });
+      }
+    },
+    [bookId, bookKey, getView],
+  );
+
+  const handleDeleteSection = useCallback(
+    async (item: TOCItem) => {
+      if (!item.href) return;
+      try {
+        await offlineAudioManager.init();
+        const voiceId = 'en-US-AriaNeural'; // TODO: Get from settings
+        await offlineAudioManager.deleteSingleSection(bookId, item.href, voiceId);
+      } catch (err) {
+        console.error('Error deleting section audio:', err);
+      }
+    },
+    [bookId],
   );
 
   const expandParents = useCallback((toc: TOCItem[], href: string) => {
@@ -262,16 +320,34 @@ const TOCView: React.FC<{
   }, [viewSettings?.translationEnabled]);
 
   const virtualListData = useMemo(
-    () => ({
+    () => {
+      const data = {
+        flatItems,
+        itemSize: virtualItemSize,
+        bookKey,
+        activeHref,
+        downloadedHrefs,
+        downloadingHrefs,
+        onToggleExpand: handleToggleExpand,
+        onItemClick: handleItemClick,
+        onDownloadSection: handleDownloadSection,
+        onDeleteSection: handleDeleteSection,
+      };
+
+      return data;
+    },
+    [
       flatItems,
-      itemSize: virtualItemSize,
+      virtualItemSize,
       bookKey,
       activeHref,
       downloadedHrefs,
-      onToggleExpand: handleToggleExpand,
-      onItemClick: handleItemClick,
-    }),
-    [flatItems, virtualItemSize, bookKey, activeHref, downloadedHrefs, handleToggleExpand, handleItemClick],
+      downloadingHrefs,
+      handleToggleExpand,
+      handleItemClick,
+      handleDownloadSection,
+      handleDeleteSection,
+    ],
   );
 
   useEffect(() => {
@@ -328,8 +404,11 @@ const TOCView: React.FC<{
           flatItem={flatItem}
           activeHref={activeHref}
           downloadedHrefs={downloadedHrefs}
+          downloadingHrefs={downloadingHrefs}
           onToggleExpand={handleToggleExpand}
           onItemClick={handleItemClick}
+          onDownloadSection={handleDownloadSection}
+          onDeleteSection={handleDeleteSection}
         />
       ))}
     </div>

@@ -28,10 +28,21 @@ export interface DownloadProgress {
   lastError?: string;
 }
 
+export interface SectionCompletion {
+  id: string; // composite key: `${bookHash}:${href}:${voiceId}`
+  bookHash: string;
+  href: string; // base href without chunk suffix
+  voiceId: string;
+  isComplete: boolean;
+  totalChunks: number;
+  completedAt?: number;
+}
+
 const DB_NAME = 'ReadestOfflineAudio';
 const DB_VERSION = 1;
 const AUDIO_STORE = 'audioRecords';
 const PROGRESS_STORE = 'downloadProgress';
+const COMPLETION_STORE = 'sectionCompletion';
 
 class OfflineAudioStorage {
   private db: IDBDatabase | null = null;
@@ -67,6 +78,13 @@ class OfflineAudioStorage {
         // Download progress store
         if (!db.objectStoreNames.contains(PROGRESS_STORE)) {
           db.createObjectStore(PROGRESS_STORE, { keyPath: 'bookHash' });
+        }
+
+        // Section completion store
+        if (!db.objectStoreNames.contains(COMPLETION_STORE)) {
+          const completionStore = db.createObjectStore(COMPLETION_STORE, { keyPath: 'id' });
+          completionStore.createIndex('bookHash', 'bookHash', { unique: false });
+          completionStore.createIndex('bookHash_voiceId', ['bookHash', 'voiceId'], { unique: false });
         }
       };
     });
@@ -237,6 +255,88 @@ class OfflineAudioStorage {
         resolve(totalSize);
       };
 
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async markSectionComplete(
+    bookHash: string,
+    href: string,
+    voiceId: string,
+    totalChunks: number,
+  ): Promise<void> {
+    if (!this.db) await this.init();
+
+    const id = this.generateId(bookHash, href, voiceId);
+    const completion: SectionCompletion = {
+      id,
+      bookHash,
+      href,
+      voiceId,
+      isComplete: true,
+      totalChunks,
+      completedAt: Date.now(),
+    };
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([COMPLETION_STORE], 'readwrite');
+      const store = transaction.objectStore(COMPLETION_STORE);
+      const request = store.put(completion);
+
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async isSectionComplete(bookHash: string, href: string, voiceId: string): Promise<boolean> {
+    if (!this.db) await this.init();
+
+    const id = this.generateId(bookHash, href, voiceId);
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([COMPLETION_STORE], 'readonly');
+      const store = transaction.objectStore(COMPLETION_STORE);
+      const request = store.get(id);
+
+      request.onsuccess = () => {
+        const completion = request.result as SectionCompletion | undefined;
+        resolve(completion?.isComplete || false);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async getCompletedSections(bookHash: string, voiceId: string): Promise<Set<string>> {
+    if (!this.db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([COMPLETION_STORE], 'readonly');
+      const store = transaction.objectStore(COMPLETION_STORE);
+      const index = store.index('bookHash_voiceId');
+      const request = index.getAll([bookHash, voiceId]);
+
+      request.onsuccess = () => {
+        const completions = request.result as SectionCompletion[];
+        const hrefs = new Set(
+          completions.filter((c) => c.isComplete).map((c) => c.href),
+        );
+        resolve(hrefs);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async deleteSectionCompletion(bookHash: string, href: string, voiceId: string): Promise<void> {
+    if (!this.db) await this.init();
+
+    const id = this.generateId(bookHash, href, voiceId);
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([COMPLETION_STORE], 'readwrite');
+      const store = transaction.objectStore(COMPLETION_STORE);
+      const request = store.delete(id);
+
+      request.onsuccess = () => resolve();
       request.onerror = () => reject(request.error);
     });
   }

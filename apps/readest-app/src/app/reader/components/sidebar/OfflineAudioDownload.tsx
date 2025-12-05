@@ -25,17 +25,20 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
   const bookDoc = view?.book || null;
   const viewSettings = getViewSettings(bookKey);
 
+  // Extract stable book identifier (metaHash) instead of dynamic bookKey
+  const bookId = bookKey.split('-')[0]!;
+
   const loadStatus = useCallback(async () => {
     try {
       await offlineAudioManager.init();
-      const savedProgress = await offlineAudioManager.getStatus(bookKey, '');
+      const savedProgress = await offlineAudioManager.getStatus(bookId, '');
       setProgress(savedProgress.progress);
-      const size = await offlineAudioManager.getTotalSize(bookKey);
+      const size = await offlineAudioManager.getTotalSize(bookId);
       setTotalSize(size);
     } catch (err) {
       console.error('Error loading offline audio status:', err);
     }
-  }, [bookKey]);
+  }, [bookId]);
 
   useEffect(() => {
     loadStatus();
@@ -63,7 +66,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
       const primaryLang = (bookDoc.metadata?.language as string) || 'en';
 
       await offlineAudioManager.downloadBook({
-        bookHash: bookKey,
+        bookHash: bookId,
         bookDoc,
         voiceId,
         rate,
@@ -76,7 +79,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
       });
 
       // Update total size after download
-      const size = await offlineAudioManager.getTotalSize(bookKey);
+      const size = await offlineAudioManager.getTotalSize(bookId);
       setTotalSize(size);
     } catch (err) {
       if (err instanceof Error && err.message !== 'Download cancelled') {
@@ -87,25 +90,25 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
       setAbortController(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookDoc, bookKey]);
+  }, [bookDoc, bookId]);
 
   const handleCancel = useCallback(() => {
     if (abortController) {
       abortController.abort();
-      offlineAudioManager.cancelDownload(bookKey);
+      offlineAudioManager.cancelDownload(bookId);
     }
-  }, [abortController, bookKey]);
+  }, [abortController, bookId]);
 
   const handleDelete = useCallback(async () => {
     try {
-      await offlineAudioManager.deleteBook(bookKey);
+      await offlineAudioManager.deleteBook(bookId);
       setProgress(null);
       setTotalSize(0);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Delete failed');
     }
-  }, [bookKey]);
+  }, [bookId]);
 
   const formatSize = (bytes: number): string => {
     if (bytes === 0) return '0 B';
