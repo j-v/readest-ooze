@@ -4,14 +4,21 @@
 This file contains concise, actionable guidance for AI coding agents working in the Readest monorepo. Focus on discoverable, repository-specific conventions, workflows, and examples.
 
 **Big Picture:**
-- **Monorepo layout:** `apps/` (Next/Tauri app), `packages/` (libraries, wasm, vendored tauri), top-level `tauri/`-related crates are under `packages/tauri/`.
-- **Frontend + Native:** The UI is a Next.js app in `apps/readest-app`. Native shells are produced via Tauri (Rust) integrated with the Next app using `src-tauri`.
-- **Why this structure:** Next.js provides the web UI while Tauri packages the same UI as native apps. The repo includes a patched/local copy of Tauri under `packages/tauri/` (see `Cargo.toml` workspace patches) so Tauri behaviour can be modified and tested locally.
+- **Monorepo layout:** `apps/readest-app` (Next.js UI + Tauri), `packages/foliate-js` (reader engine), `packages/simplecc-wasm` (Chinese conversion), `packages/tauri/` (patched Tauri), `packages/tauri-plugins/` (custom plugins).
+- **Frontend + Native:** Single Next.js app deployed as web, desktop (macOS/Windows/Linux), and mobile (iOS/Android) via Tauri. All platforms share the same React codebase; platform-specific logic branches on `isTauriAppPlatform()`, `isWebAppPlatform()`, or `hasCli()` env checks in `src/services/environment.ts`.
+- **Why this structure:** Next.js provides the unified UI, Tauri/Rust handles desktop/mobile packaging and platform integration. The local Tauri copy under `packages/tauri/` (patched in `Cargo.toml` workspace) allows custom Tauri behavior; modify sparingly and only when needed for platform-specific fixes.
+
+**Frontend architecture & state management:**
+- **Context Providers** (in `src/context/`): `AuthContext` (user/token), `EnvContext` (platform detection + AppService), `SyncContext` (sync client), `PHContext` (PostHog analytics). All providers are composed in `src/components/Providers.tsx` and must wrap the app.
+- **Zustand stores** (in `src/store/`): `readerStore`, `bookDataStore`, `settingsStore`, `themeStore`, `libraryStore`, `sidebarStore`, `notebookStore`, `parallelViewStore` (for dual-view reading), and others. Access via custom hooks: `useReaderStore()`, `useBookDataStore()`, etc. Stores persist to localStorage when relevant.
+- **Platform-specific branching:** Use `useEnv().envConfig.getAppService()` to get `NativeAppService` (Tauri) or `WebAppService` (web). Check platform via `isTauriAppPlatform()`, `isWebAppPlatform()`, `hasCli()`, or `isPWA()` from `src/services/environment.ts`.
+- **Foliate integration:** Book rendering is delegated to `foliate-js` (`packages/foliate-js/`). `readerStore` manages `FoliateView` instances. Transformers (highlight, dictionary, text-to-speech) are chained in `src/services/transformers/` and applied to rendered content.
 
 **Key workflows & commands (reproducible):**
 - Install deps (root):
   - `pnpm install` (run at repository root)
   - `git submodule update --init --recursive` (required by README)
+  - **CRITICAL:** `pnpm --filter @readest/readest-app setup-vendors` — copies PDF.js and simplecc-wasm artifacts. **Must run before `pnpm dev-web` or builds will fail.**
 - Run web dev server:
   - From root: `pnpm dev-web` (delegates to `@readest/readest-app`)
   - Or enter app and run: `pnpm --filter @readest/readest-app dev-web` or `cd apps/readest-app && pnpm dev-web`
@@ -21,6 +28,10 @@ This file contains concise, actionable guidance for AI coding agents working in 
 - Build production artifacts:
   - Web: `pnpm --filter @readest/readest-app build-web` or `pnpm build-web` from the app
   - Desktop: `pnpm tauri build` (the app has many platform-targeted build scripts in `apps/readest-app/package.json`)
+- Testing & validation:
+  - Run tests (app): `cd apps/readest-app && pnpm test`
+  - Linting: `pnpm lint` (at root, lints all packages)
+  - Build checks: `pnpm --filter @readest/readest-app check:all` (validates translations and regex compatibility)
 
 **Environment conventions:**
 - Many scripts use `dotenv-cli` and expect environment files: `.env.tauri`, `.env.web`, plus environment-specific `*.local` files (`.env.tauri.local`, `.env.apple-appstore.local`, etc.). Always check `apps/readest-app/package.json` scripts to see which `.env` file is used.
