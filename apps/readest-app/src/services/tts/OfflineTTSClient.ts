@@ -76,6 +76,44 @@ export class OfflineTTSClient implements TTSClient {
       return;
     }
 
+    // Load metadata for this section
+    const metadata = await offlineAudioStorage.getMarkMetadata(
+      this.#bookHash,
+      this.#sectionHref,
+      this.#voiceId,
+    );
+
+    if (!metadata) {
+      yield {
+        code: 'error',
+        message: 'No offline audio metadata found for this section',
+      } as TTSMessageEvent;
+      return;
+    }
+
+    // Validate content hasn't changed
+    const { marks } = parseSSMLMarks(ssml, this.#speakingLang);
+    // const currentContentHash = simpleHash(plainText);
+
+    // if (currentContentHash !== metadata.contentHash) {
+    //   console.warn('Book content changed, offline audio may be out of sync');
+    //   yield {
+    //     code: 'error',
+    //     message: 'Content mismatch - book may have been updated',
+    //   } as TTSMessageEvent;
+    //   return;
+    // }
+
+    // // Validate marks match
+    // if (marks.length !== metadata.marks.length) {
+    //   console.warn(`Mark count mismatch: ${marks.length} vs ${metadata.marks.length}`);
+    //   yield {
+    //     code: 'error',
+    //     message: 'Mark mismatch - regenerate offline audio',
+    //   } as TTSMessageEvent;
+    //   return;
+    // }
+
     // Try to get stored audio chunks for this section
     const audioChunks = await this.getAudioChunksForSection();
 
@@ -119,11 +157,32 @@ export class OfflineTTSClient implements TTSClient {
         return;
       }
 
+      // Set up mark emission based on timing
+      let currentMarkIndex = 0;
+      const markTimings = metadata.marks;
+
+      audio.ontimeupdate = () => {
+        const currentTime = audio.currentTime * 1000; // convert to ms
+
+        while (currentMarkIndex < markTimings.length) {
+          const markTiming = markTimings[currentMarkIndex]!;
+          const correspondingMark = marks[currentMarkIndex];
+
+          if (currentTime >= markTiming.audioOffset) {
+            // Emit mark event for highlighting
+            if (correspondingMark) {
+              this.controller?.dispatchSpeakMark(correspondingMark);
+            }
+            currentMarkIndex++;
+          } else {
+            break; // Wait for audio to catch up
+          }
+        }
+      };
+
       // Emit boundary event for section start
-      const { marks } = parseSSMLMarks(ssml);
       const firstMark = marks[0];
       if (firstMark) {
-        this.controller?.dispatchSpeakMark(firstMark);
         yield {
           code: 'boundary',
           message: `Start section audio: ${this.#sectionHref}`,
@@ -136,6 +195,7 @@ export class OfflineTTSClient implements TTSClient {
         const cleanUp = () => {
           audio.onended = null;
           audio.onerror = null;
+          audio.ontimeupdate = null;
           audio.src = '';
           URL.revokeObjectURL(audioUrl);
         };
@@ -186,23 +246,24 @@ export class OfflineTTSClient implements TTSClient {
 
   /**
    * Get all audio chunks for a section
-   * Handles both single-chunk and multi-chunk sections
+   * Handles block-level chunks stored as href#block-N
    */
   private async getAudioChunksForSection(): Promise<OfflineAudioRecord[]> {
     try {
       const allAudio = await offlineAudioStorage.getBookAudio(this.#bookHash);
 
-      // Filter for this section and voice
+      // Filter for this section and voice (includes both href and href#block-N)
       const sectionAudio = allAudio.filter(
         (record) =>
-          (record.href === this.#sectionHref || record.href.startsWith(`${this.#sectionHref}#chunk-`)) &&
+          (record.href === this.#sectionHref ||
+            record.href.startsWith(`${this.#sectionHref}#block-`)) &&
           record.voiceId === this.#voiceId,
       );
 
-      // Sort by chunk index if multi-chunk
+      // Sort by block index if multi-chunk
       return sectionAudio.sort((a, b) => {
-        const aChunk = parseInt(a.href.split('#chunk-')[1] || '0');
-        const bChunk = parseInt(b.href.split('#chunk-')[1] || '0');
+        const aChunk = parseInt(a.href.split('#block-')[1] || '0');
+        const bChunk = parseInt(b.href.split('#block-')[1] || '0');
         return aChunk - bChunk;
       });
     } catch (error) {

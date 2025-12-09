@@ -1,10 +1,19 @@
 /**
  * OfflineAudioManager - Orchestrates downloading and managing offline TTS audio
+ * Uses Foliate TTS for SSML generation to ensure parity with online TTS highlighting.
  */
 
 import { TOCItem, BookDoc } from '@/libs/document';
-import { offlineAudioStorage, DownloadProgress } from './OfflineAudioStorage';
-import { EdgeSpeechTTS, EdgeTTSPayload } from '@/libs/edgeTTS';
+import {
+  offlineAudioStorage,
+  DownloadProgress,
+  MarkTimingInfo,
+} from './OfflineAudioStorage';
+import { EdgeSpeechTTS } from '@/libs/edgeTTS';
+import { parseSSMLMarks } from '@/utils/ssml';
+import { getAudioDuration, simpleHash } from './utils';
+import { generateSSMLChunksForSection } from './FoliateTTSHelper';
+import { TTSGranularity } from './types';
 
 export interface DownloadOptions {
   bookHash: string;
@@ -82,174 +91,83 @@ class OfflineAudioManager extends EventTarget {
   }
 
   /**
-   * Extract text content from a section
+   * Download audio for a section using Foliate TTS-generated SSML chunks.
+   * Each SSML chunk corresponds to a block/paragraph in the document.
    */
-  private async getSectionText(bookDoc: BookDoc, href: string): Promise<string> {
-    const section = bookDoc.sections?.find((s) => {
-      const sectionHref = s.id || '';
-      return href.includes(sectionHref) || sectionHref.includes(href);
-    });
-
-    if (!section) {
-      console.warn('Section not found for href:', href);
-      return '';
-    }
-
-    try {
-      const doc = await section.createDocument();
-      const bodyText = doc.body?.textContent || '';
-      return bodyText.trim();
-    } catch (error) {
-      console.error('Error extracting section text:', error);
-      return '';
-    }
-  }
-
-  /**
-   * Segment text using Intl.Segmenter (same as foliate-js TTS)
-   * Returns segments with metadata for mapping back to original text
-   */
-  private segmentText(
-    text: string,
-    lang: string,
-    granularity: 'sentence' | 'word' = 'sentence',
-  ): Array<{ text: string; offset: number; index: number }> {
-    const segmenter = new Intl.Segmenter(lang, { granularity });
-    const segments: Array<{ text: string; offset: number; index: number }> = [];
-    
-    const cleanText = text.replace(/\r\n/g, '  ').replace(/\r/g, ' ').replace(/\n/g, ' ');
-    const rawSegments = Array.from(segmenter.segment(cleanText));
-    
-    // Merge segments that end with abbreviations followed by capitalized words
-    // This prevents splitting sentences like "Dr. Smith went..." into multiple segments
-    const mergedSegments = [];
-    for (let i = 0; i < rawSegments.length; i++) {
-      const current = rawSegments[i]!;
-      const next = rawSegments[i + 1];
-      const segment = current.segment.trim();
-      const nextSegment = next?.segment?.trim();
-      
-      const endsWithAbbr = /(?:^|\s)([A-Z][a-z]{1,5})\.$/.test(segment);
-      const nextStartsWithCapital = /^[A-Z]/.test(nextSegment || '');
-      
-      if (endsWithAbbr && nextStartsWithCapital && next) {
-        mergedSegments.push({
-          index: current.index,
-          segment: current.segment + next.segment,
-        });
-        i++; // Skip the next segment since we merged it
-      } else {
-        mergedSegments.push({
-          index: current.index,
-          segment: current.segment,
-        });
-      }
-    }
-    
-    // Filter and collect meaningful segments
-    let segmentIndex = 0;
-    for (const { index, segment } of mergedSegments) {
-      const trimmed = segment.trim();
-      if (trimmed) {
-        segments.push({
-          text: trimmed,
-          offset: index,
-          index: segmentIndex++,
-        });
-      }
-    }
-    
-    return segments;
-  }
-
-  /**
-   * Chunk segments into groups that fit within TTS character limits
-   * Preserves segment boundaries for proper mapping
-   */
-  private chunkSegments(
-    segments: Array<{ text: string; offset: number; index: number }>,
-    maxChars: number = 3000,
-  ): Array<Array<{ text: string; offset: number; index: number }>> {
-    const chunks: Array<Array<{ text: string; offset: number; index: number }>> = [];
-    let currentChunk: Array<{ text: string; offset: number; index: number }> = [];
-    let currentLength = 0;
-    
-    for (const segment of segments) {
-      const segmentLength = segment.text.length;
-      
-      // If adding this segment would exceed the limit and we have segments, start a new chunk
-      if (currentLength + segmentLength > maxChars && currentChunk.length > 0) {
-        chunks.push(currentChunk);
-        currentChunk = [segment];
-        currentLength = segmentLength;
-      } else {
-        currentChunk.push(segment);
-        currentLength += segmentLength;
-      }
-    }
-    
-    // Add the last chunk if it has content
-    if (currentChunk.length > 0) {
-      chunks.push(currentChunk);
-    }
-    
-    return chunks;
-  }
-
-  /**
-   * Download audio for a single section
-   */
-  private async downloadSection(
+  private async downloadSectionWithFoliateTTS( // TODO not good name since we've already used foliate?
     bookHash: string,
     href: string,
-    text: string,
+    ssmlChunks: Array<{ ssml: string; blockIndex: number }>,
     voiceId: string,
     lang: string,
     rate: number,
     pitch: number,
+    granularity: TTSGranularity,
+    onProgress?: (downloaded: number, total: number) => void,
   ): Promise<void> {
-    if (!text) {
-      console.warn('No text to download for href:', href);
-      return;
-    }
+    const allMarkMetadata: MarkTimingInfo[] = [];
+    let cumulativeAudioOffset = 0;
+    let totalPlainText = '';
 
-    // Segment text using Intl.Segmenter (same approach as foliate-js TTS)
-    const segments = this.segmentText(text, lang, 'sentence');
-    
-    // Chunk segments to fit within TTS limits while preserving sentence boundaries
-    const chunks = this.chunkSegments(segments, 3000);
+    for (let chunkIndex = 0; chunkIndex < ssmlChunks.length; chunkIndex++) {
+      const chunk = ssmlChunks[chunkIndex]!;
+      const { ssml, blockIndex } = chunk;
 
-    // Download audio for each chunk
-    for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
-      const chunk = chunks[chunkIndex]!;
-      
-      // Join segments in this chunk with spaces
-      const chunkText = chunk.map(seg => seg.text).join(' ');
-      
-      const payload: EdgeTTSPayload = {
-        lang,
-        text: chunkText,
-        voice: voiceId,
-        rate,
-        pitch,
-      };
+      // Parse SSML to get marks and plain text
+      const { plainText, marks } = parseSSMLMarks(ssml, lang);
+
+      if (!plainText || marks.length === 0) {
+        console.log(`[OfflineAudioManager] Skipping empty chunk ${chunkIndex}`);
+        continue;
+      }
+
+      totalPlainText += plainText;
+
+      console.log(`[OfflineAudioManager] Processing chunk ${chunkIndex} (block ${blockIndex}):`, {
+        marksCount: marks.length,
+        textLength: plainText.length,
+        firstMark: marks[0]?.name,
+      });
 
       try {
-        // Use EdgeSpeechTTS directly to get the audio
-        const response = await this.edgeTTS.create(payload);
+        // Generate audio for the entire chunk's plain text
+        const response = await this.edgeTTS.create({
+          lang,
+          text: plainText,
+          voice: voiceId,
+          rate,
+          pitch,
+        });
+
         const arrayBuffer = await response.arrayBuffer();
         const audioBlob = new Blob([arrayBuffer], { type: 'audio/mpeg' });
-        
-        // Store with chunk metadata for later playback mapping
-        const chunkHref = chunks.length > 1 ? `${href}#chunk-${chunkIndex}` : href;
-        
-        // Store segment metadata as JSON string for later mapping
-        const segmentMetadata = chunk.map(seg => ({
-          text: seg.text,
-          offset: seg.offset,
-          index: seg.index,
-        }));
-        
+
+        // Get audio duration
+        const chunkDuration = await getAudioDuration(audioBlob);
+
+        // Create timing metadata for each mark in this chunk
+        // Distribute duration proportionally across marks based on text length
+        const totalChars = marks.reduce((sum, m) => sum + m.text.length, 0);
+        let markOffset = cumulativeAudioOffset;
+
+        for (const mark of marks) {
+          const markDuration = (mark.text.length / Math.max(totalChars, 1)) * chunkDuration;
+          allMarkMetadata.push({
+            name: mark.name,
+            text: mark.text,
+            language: mark.language,
+            offset: mark.offset,
+            audioOffset: markOffset,
+            duration: markDuration,
+          });
+          markOffset += markDuration;
+        }
+
+        cumulativeAudioOffset += chunkDuration;
+
+        // Store audio chunk with unique href per block
+        const chunkHref = `${href}#block-${blockIndex}`;
+
         await offlineAudioStorage.saveAudio({
           bookHash,
           href: chunkHref,
@@ -257,23 +175,47 @@ class OfflineAudioManager extends EventTarget {
           audioBlob,
           rate,
           pitch,
-          text: chunkText,
-          ssml: JSON.stringify(segmentMetadata), // Store segment metadata for playback
+          text: plainText,
+          ssml: ssml,
           downloadedAt: Date.now(),
           size: audioBlob.size,
         });
+
+        onProgress?.(chunkIndex + 1, ssmlChunks.length);
       } catch (error) {
-        console.error('Error downloading audio chunk:', chunkIndex, error);
+        console.error(`Error downloading audio for chunk ${chunkIndex}:`, error);
         throw error;
       }
     }
 
+    // Generate content hash for validation
+    const contentHash = simpleHash(totalPlainText);
+
+    // Save mark metadata for synchronization
+    await offlineAudioStorage.saveMarkMetadata({
+      bookHash,
+      href,
+      voiceId,
+      contentHash,
+      granularity,
+      language: lang,
+      marks: allMarkMetadata,
+      totalDuration: cumulativeAudioOffset,
+      createdAt: Date.now(),
+    });
+
     // Mark section as complete
-    await offlineAudioStorage.markSectionComplete(bookHash, href, voiceId, chunks.length);
+    await offlineAudioStorage.markSectionComplete(
+      bookHash,
+      href,
+      voiceId,
+      ssmlChunks.length,
+    );
   }
 
   /**
-   * Download audio for a single section/chapter
+   * Download audio for a single section/chapter using Foliate TTS for SSML generation.
+   * This ensures exact parity with the online TTS highlighting.
    */
   async downloadSingleSection(options: DownloadSectionOptions): Promise<void> {
     const {
@@ -301,13 +243,35 @@ class OfflineAudioManager extends EventTarget {
       return;
     }
 
+    const lang = targetLang || primaryLang;
+    const granularity: TTSGranularity = 'sentence';
+
     try {
-      const text = await this.getSectionText(bookDoc, href);
-      const lang = targetLang || primaryLang;
-      
-      onProgress?.(0, 1);
-      await this.downloadSection(bookHash, href, text, voiceId, lang, rate, pitch);
-      onProgress?.(1, 1);
+      // Use Foliate TTS to generate SSML chunks (same as online TTS path)
+      const ssmlChunks = await generateSSMLChunksForSection(bookDoc, href, granularity);
+
+      if (ssmlChunks.length === 0) {
+        console.warn('[OfflineAudioManager] No SSML chunks generated for href:', href);
+        onProgress?.(1, 1);
+        return;
+      }
+
+      onProgress?.(0, ssmlChunks.length);
+
+      // Download audio for each SSML chunk (block/paragraph)
+      await this.downloadSectionWithFoliateTTS(
+        bookHash,
+        href,
+        ssmlChunks,
+        voiceId,
+        lang,
+        rate,
+        pitch,
+        granularity,
+        onProgress,
+      );
+
+      onProgress?.(ssmlChunks.length, ssmlChunks.length);
 
       this.dispatchEvent(
         new CustomEvent('section-download-complete', {
@@ -395,9 +359,28 @@ class OfflineAudioManager extends EventTarget {
             continue;
           }
 
-          const text = await this.getSectionText(bookDoc, href);
           const lang = targetLang || primaryLang;
-          await this.downloadSection(bookHash, href, text, voiceId, lang, rate, pitch);
+          const granularity: TTSGranularity = 'sentence'; // Use sentence granularity for offline audio
+
+          // Use Foliate TTS to generate SSML chunks for exact parity with online TTS
+          const ssmlChunks = await generateSSMLChunksForSection(
+            bookDoc,
+            href,
+            granularity,
+          );
+
+          if (ssmlChunks.length > 0) {
+            await this.downloadSectionWithFoliateTTS(
+              bookHash,
+              href,
+              ssmlChunks,
+              voiceId,
+              lang,
+              rate,
+              pitch,
+              granularity,
+            );
+          }
 
           progress.downloadedSections++;
           await offlineAudioStorage.saveProgress(progress);
@@ -502,12 +485,12 @@ class OfflineAudioManager extends EventTarget {
    * Delete downloaded audio for a single section
    */
   async deleteSingleSection(bookHash: string, href: string, voiceId: string): Promise<void> {
-    // Get all audio chunks for this href (including chunk-0, chunk-1, etc.)
+    // Get all audio chunks for this href (including block-0, block-1, etc.)
     const allAudio = await offlineAudioStorage.getBookAudio(bookHash);
     const hrefAudio = allAudio.filter(
       (record) =>
         record.voiceId === voiceId &&
-        (record.href === href || record.href.startsWith(`${href}#chunk-`)),
+        (record.href === href || record.href.startsWith(`${href}#block-`)),
     );
 
     // Delete all chunks

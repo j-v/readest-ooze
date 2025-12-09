@@ -17,6 +17,28 @@ export interface OfflineAudioRecord {
   size: number; // blob size in bytes
 }
 
+export interface MarkTimingInfo {
+  name: string; // mark name from SSML (e.g., "0", "1", "2")
+  text: string; // the actual text content
+  language: string; // language for this mark
+  offset: number; // character offset in plain text
+  audioOffset: number; // time offset in audio (ms)
+  duration: number; // duration of this mark's audio (ms)
+}
+
+export interface OfflineAudioMarkMetadata {
+  id: string; // composite key: `${bookHash}:${href}:${voiceId}`
+  bookHash: string;
+  href: string; // section identifier
+  voiceId: string;
+  contentHash: string; // hash of the text content for validation
+  granularity: 'word' | 'sentence'; // must match during playback
+  language: string; // primary language used
+  marks: MarkTimingInfo[]; // array of mark timing metadata
+  totalDuration: number; // total audio duration in ms
+  createdAt: number;
+}
+
 export interface DownloadProgress {
   bookHash: string;
   totalSections: number;
@@ -39,10 +61,11 @@ export interface SectionCompletion {
 }
 
 const DB_NAME = 'ReadestOfflineAudio';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const AUDIO_STORE = 'audioRecords';
 const PROGRESS_STORE = 'downloadProgress';
 const COMPLETION_STORE = 'sectionCompletion';
+const METADATA_STORE = 'markMetadata';
 
 class OfflineAudioStorage {
   private db: IDBDatabase | null = null;
@@ -85,6 +108,15 @@ class OfflineAudioStorage {
           const completionStore = db.createObjectStore(COMPLETION_STORE, { keyPath: 'id' });
           completionStore.createIndex('bookHash', 'bookHash', { unique: false });
           completionStore.createIndex('bookHash_voiceId', ['bookHash', 'voiceId'], { unique: false });
+        }
+
+        // Mark metadata store (for timing synchronization)
+        if (!db.objectStoreNames.contains(METADATA_STORE)) {
+          const metadataStore = db.createObjectStore(METADATA_STORE, { keyPath: 'id' });
+          metadataStore.createIndex('bookHash', 'bookHash', { unique: false });
+          metadataStore.createIndex('bookHash_voiceId', ['bookHash', 'voiceId'], {
+            unique: false,
+          });
         }
       };
     });
@@ -337,6 +369,98 @@ class OfflineAudioStorage {
       const request = store.delete(id);
 
       request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  // Mark Metadata Methods
+
+  async saveMarkMetadata(metadata: Omit<OfflineAudioMarkMetadata, 'id'>): Promise<void> {
+    if (!this.db) await this.init();
+
+    const id = this.generateId(metadata.bookHash, metadata.href, metadata.voiceId);
+    const record: OfflineAudioMarkMetadata = { ...metadata, id };
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([METADATA_STORE], 'readwrite');
+      const store = transaction.objectStore(METADATA_STORE);
+      const request = store.put(record);
+
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async getMarkMetadata(
+    bookHash: string,
+    href: string,
+    voiceId: string,
+  ): Promise<OfflineAudioMarkMetadata | null> {
+    if (!this.db) await this.init();
+
+    const id = this.generateId(bookHash, href, voiceId);
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([METADATA_STORE], 'readonly');
+      const store = transaction.objectStore(METADATA_STORE);
+      const request = store.get(id);
+
+      request.onsuccess = () => {
+        resolve((request.result as OfflineAudioMarkMetadata) || null);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async getBookMarkMetadata(bookHash: string): Promise<OfflineAudioMarkMetadata[]> {
+    if (!this.db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([METADATA_STORE], 'readonly');
+      const store = transaction.objectStore(METADATA_STORE);
+      const index = store.index('bookHash');
+      const request = index.getAll(bookHash);
+
+      request.onsuccess = () => {
+        resolve(request.result as OfflineAudioMarkMetadata[]);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async deleteMarkMetadata(bookHash: string, href: string, voiceId: string): Promise<void> {
+    if (!this.db) await this.init();
+
+    const id = this.generateId(bookHash, href, voiceId);
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([METADATA_STORE], 'readwrite');
+      const store = transaction.objectStore(METADATA_STORE);
+      const request = store.delete(id);
+
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async deleteBookMarkMetadata(bookHash: string): Promise<void> {
+    if (!this.db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([METADATA_STORE], 'readwrite');
+      const store = transaction.objectStore(METADATA_STORE);
+      const index = store.index('bookHash');
+      const request = index.openCursor(IDBKeyRange.only(bookHash));
+
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (cursor) {
+          cursor.delete();
+          cursor.continue();
+        } else {
+          resolve();
+        }
+      };
       request.onerror = () => reject(request.error);
     });
   }
