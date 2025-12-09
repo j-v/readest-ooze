@@ -68,20 +68,34 @@ export class OfflineTTSClient implements TTSClient {
    * This ensures we match against the same SSML that was stored.
    */
   private preprocessSSML(ssml: string, targetLang?: string): string {
+    // First normalize whitespace within SSML content (collapse newlines/spaces)
+    // This must happen before other transformations to ensure consistent text extraction
+    ssml = ssml.replace(/\s+/g, ' ');
+
     // Apply same transformations as TTSController#preprocessSSML
     ssml = ssml
       .replace(/<emphasis[^>]*>([^<]+)<\/emphasis>/g, '$1')
-      .replace(/[–—]/g, ',')
+      .replace(/[\u2013\u2014]/g, ',')
       .replace('<break/>', ' ')
       .replace(/\.{3,}/g, '   ')
-      .replace(/……/g, '  ')
+      .replace(/\u2026\u2026/g, '  ')
       .replace(/\*/g, ' ')
-      .replace(/·/g, ' ');
+      .replace(/\u00b7/g, ' ');
 
     if (targetLang) {
       ssml = filterSSMLWithLang(ssml, targetLang);
     }
     return ssml;
+  }
+
+  /**
+   * Normalize whitespace in plain text to ensure consistent matching.
+   * Collapses multiple spaces and normalizes line endings.
+   */
+  private normalizeWhitespace(text: string): string {
+    return text
+      .replace(/\s+/g, ' ') // Collapse multiple whitespace to single space
+      .trim();
   }
 
   /**
@@ -101,16 +115,22 @@ export class OfflineTTSClient implements TTSClient {
 
     // Preprocess SSML to match what was stored during download
     // Use controller's targetLang if available
-    const targetLang = this.controller?.ttsTargetLang || undefined;
-    const preprocessedSSML = this.preprocessSSML(ssml, targetLang);
+    // const targetLang = this.controller?.ttsTargetLang || undefined;
+    // const preprocessedSSML = this.preprocessSSML(ssml, targetLang);
 
     // Parse the incoming SSML to get marks for this block
-    const { plainText, marks } = parseSSMLMarks(preprocessedSSML, this.#speakingLang);
+    const { plainText: rawPlainText, marks } = parseSSMLMarks(
+      ssml,
+      this.#speakingLang,
+    );
 
-    if (!plainText || marks.length === 0) {
-      yield { code: 'error', message: 'No content in SSML' } as TTSMessageEvent;
-      return;
-    }
+    // Normalize whitespace for consistent matching
+    const plainText = this.normalizeWhitespace(rawPlainText);
+
+    // if (!plainText || marks.length === 0) {
+    //   yield { code: 'error', message: 'No content in SSML' } as TTSMessageEvent;
+    //   return;
+    // }
 
     // Find matching audio chunk by content hash
     const contentHash = simpleHash(plainText);
@@ -263,7 +283,7 @@ export class OfflineTTSClient implements TTSClient {
 
       // First try to match by content hash
       for (const record of sectionAudio) {
-        const recordHash = simpleHash(record.text);
+        const recordHash = simpleHash(this.normalizeWhitespace(record.text));
         if (recordHash === contentHash) {
           return record;
         }
@@ -273,7 +293,7 @@ export class OfflineTTSClient implements TTSClient {
       // TODO this probably won't help but maybe there are some other ideas for fallback
       const normalizedPlainText = plainText.trim().toLowerCase();
       for (const record of sectionAudio) {
-        const recordText = record.text.trim().toLowerCase();
+        const recordText = this.normalizeWhitespace(record.text).trim().toLowerCase();
         if (recordText === normalizedPlainText) {
           return record;
         }

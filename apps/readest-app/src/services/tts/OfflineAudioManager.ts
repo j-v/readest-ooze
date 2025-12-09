@@ -57,18 +57,18 @@ class OfflineAudioManager extends EventTarget {
 
   async init(): Promise<void> {
     await offlineAudioStorage.init();
-    // Test EdgeTTS to ensure it's working
-    try {
-      await this.edgeTTS.create({
-        lang: 'en',
-        text: 'test',
-        voice: 'en-US-AriaNeural',
-        rate: 1.0,
-        pitch: 1.0,
-      });
-    } catch (error) {
-      console.error('EdgeTTS initialization failed:', error);
-    }
+    // // Test EdgeTTS to ensure it's working
+    // try {
+    //   await this.edgeTTS.create({
+    //     lang: 'en',
+    //     text: 'test',
+    //     voice: 'en-US-AriaNeural',
+    //     rate: 1.0,
+    //     pitch: 1.0,
+    //   });
+    // } catch (error) {
+    //   console.error('EdgeTTS initialization failed:', error);
+    // }
   }
 
   /**
@@ -76,20 +76,34 @@ class OfflineAudioManager extends EventTarget {
    * This ensures stored audio matches what TTSController will request during playback.
    */
   private preprocessSSML(ssml: string, targetLang?: string): string {
+    // First normalize whitespace within SSML content (collapse newlines/spaces)
+    // This must happen before other transformations to ensure consistent text extraction
+    ssml = ssml.replace(/\s+/g, ' ');
+
     // Apply same transformations as TTSController#preprocessSSML
     ssml = ssml
       .replace(/<emphasis[^>]*>([^<]+)<\/emphasis>/g, '$1')
-      .replace(/[–—]/g, ',')
+      .replace(/[\u2013\u2014]/g, ',')
       .replace('<break/>', ' ')
       .replace(/\.{3,}/g, '   ')
-      .replace(/……/g, '  ')
+      .replace(/\u2026\u2026/g, '  ')
       .replace(/\*/g, ' ')
-      .replace(/·/g, ' ');
+      .replace(/\u00b7/g, ' ');
 
     if (targetLang) {
       ssml = filterSSMLWithLang(ssml, targetLang);
     }
     return ssml;
+  }
+
+  /**
+   * Normalize whitespace in plain text to ensure consistent matching.
+   * Collapses multiple spaces and normalizes line endings.
+   */
+  private normalizeWhitespace(text: string): string {
+    return text
+      .replace(/\s+/g, ' ') // Collapse multiple whitespace to single space
+      .trim();
   }
 
   /**
@@ -139,7 +153,10 @@ class OfflineAudioManager extends EventTarget {
       const ssml = this.preprocessSSML(rawSSML, targetLang);
 
       // Parse SSML to get marks and plain text
-      const { plainText, marks } = parseSSMLMarks(ssml, lang);
+      const { plainText: rawPlainText, marks } = parseSSMLMarks(ssml, lang);
+
+      // Normalize whitespace for consistent matching
+      const plainText = this.normalizeWhitespace(rawPlainText);
 
       if (!plainText || marks.length === 0) {
         console.log(`[OfflineAudioManager] Skipping empty chunk ${chunkIndex}`);
