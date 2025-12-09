@@ -63,30 +63,6 @@ export class OfflineTTSClient implements TTSClient {
     if (lang) this.#speakingLang = lang;
   }
 
-  /**
-   * Preprocess SSML to match TTSController's preprocessing logic.
-   * This ensures we match against the same SSML that was stored.
-   */
-  private preprocessSSML(ssml: string, targetLang?: string): string {
-    // First normalize whitespace within SSML content (collapse newlines/spaces)
-    // This must happen before other transformations to ensure consistent text extraction
-    ssml = ssml.replace(/\s+/g, ' ');
-
-    // Apply same transformations as TTSController#preprocessSSML
-    ssml = ssml
-      .replace(/<emphasis[^>]*>([^<]+)<\/emphasis>/g, '$1')
-      .replace(/[\u2013\u2014]/g, ',')
-      .replace('<break/>', ' ')
-      .replace(/\.{3,}/g, '   ')
-      .replace(/\u2026\u2026/g, '  ')
-      .replace(/\*/g, ' ')
-      .replace(/\u00b7/g, ' ');
-
-    if (targetLang) {
-      ssml = filterSSMLWithLang(ssml, targetLang);
-    }
-    return ssml;
-  }
 
   /**
    * Normalize whitespace in plain text to ensure consistent matching.
