@@ -1,6 +1,6 @@
 import { TTSClient, TTSMessageEvent } from './TTSClient';
 import { offlineAudioStorage, OfflineAudioRecord } from './OfflineAudioStorage';
-import { parseSSMLMarks, filterSSMLWithLang } from '@/utils/ssml';
+import { parseSSMLMarks } from '@/utils/ssml';
 import { TTSController } from './TTSController';
 import { TTSGranularity, TTSVoice, TTSVoicesGroup } from './types';
 import { simpleHash } from './utils';

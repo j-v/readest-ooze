@@ -3,6 +3,7 @@ next step
 
 issues with offline audio
 - not working in safari
+- can web app be run offline? (specifically in iOS)
 - progress completely broken?
 - navigation (next/prev sentence) broken because of structure of SMLL chunks
 - error handling
@@ -12,6 +13,10 @@ issues with offline audio
 offline audio improvements
 - custom voice
 - custom playback speed
+- better audio-text synchronization / highlight tracking
+- handle audio playback across page turns
+- persist playback position/state
+- fallback when SMLL structure doesn't match
 
 TTS issues
 - text breaking in Meditations
