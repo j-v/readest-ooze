@@ -10,7 +10,7 @@ import {
   MarkTimingInfo,
 } from './OfflineAudioStorage';
 import { EdgeSpeechTTS } from '@/libs/edgeTTS';
-import { parseSSMLMarks } from '@/utils/ssml';
+import { parseSSMLMarks, filterSSMLWithLang } from '@/utils/ssml';
 import { getAudioDuration, simpleHash } from './utils';
 import { generateSSMLChunksForSection } from './FoliateTTSHelper';
 import { TTSGranularity } from './types';
@@ -72,6 +72,27 @@ class OfflineAudioManager extends EventTarget {
   }
 
   /**
+   * Preprocess SSML to match TTSController's preprocessing logic.
+   * This ensures stored audio matches what TTSController will request during playback.
+   */
+  private preprocessSSML(ssml: string, targetLang?: string): string {
+    // Apply same transformations as TTSController#preprocessSSML
+    ssml = ssml
+      .replace(/<emphasis[^>]*>([^<]+)<\/emphasis>/g, '$1')
+      .replace(/[–—]/g, ',')
+      .replace('<break/>', ' ')
+      .replace(/\.{3,}/g, '   ')
+      .replace(/……/g, '  ')
+      .replace(/\*/g, ' ')
+      .replace(/·/g, ' ');
+
+    if (targetLang) {
+      ssml = filterSSMLWithLang(ssml, targetLang);
+    }
+    return ssml;
+  }
+
+  /**
    * Flatten TOC to get all chapters/sections
    */
   private flattenTOC(toc: TOCItem[]): TOCItem[] {
@@ -94,7 +115,7 @@ class OfflineAudioManager extends EventTarget {
    * Download audio for a section using Foliate TTS-generated SSML chunks.
    * Each SSML chunk corresponds to a block/paragraph in the document.
    */
-  private async downloadSectionWithFoliateTTS( // TODO not good name since we've already used foliate?
+  private async downloadSectionWithFoliateTTS(
     bookHash: string,
     href: string,
     ssmlChunks: Array<{ ssml: string; blockIndex: number }>,
@@ -103,6 +124,7 @@ class OfflineAudioManager extends EventTarget {
     rate: number,
     pitch: number,
     granularity: TTSGranularity,
+    targetLang?: string,
     onProgress?: (downloaded: number, total: number) => void,
   ): Promise<void> {
     const allMarkMetadata: MarkTimingInfo[] = [];
@@ -111,7 +133,10 @@ class OfflineAudioManager extends EventTarget {
 
     for (let chunkIndex = 0; chunkIndex < ssmlChunks.length; chunkIndex++) {
       const chunk = ssmlChunks[chunkIndex]!;
-      const { ssml, blockIndex } = chunk;
+      const { ssml: rawSSML, blockIndex } = chunk;
+
+      // Preprocess SSML to match TTSController's preprocessing
+      const ssml = this.preprocessSSML(rawSSML, targetLang);
 
       // Parse SSML to get marks and plain text
       const { plainText, marks } = parseSSMLMarks(ssml, lang);
@@ -268,6 +293,7 @@ class OfflineAudioManager extends EventTarget {
         rate,
         pitch,
         granularity,
+        targetLang,
         onProgress,
       );
 
@@ -379,6 +405,7 @@ class OfflineAudioManager extends EventTarget {
               rate,
               pitch,
               granularity,
+              targetLang,
             );
           }
 

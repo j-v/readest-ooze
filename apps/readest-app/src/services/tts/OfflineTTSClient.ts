@@ -1,18 +1,19 @@
 import { TTSClient, TTSMessageEvent } from './TTSClient';
 import { offlineAudioStorage, OfflineAudioRecord } from './OfflineAudioStorage';
-import { parseSSMLMarks } from '@/utils/ssml';
+import { parseSSMLMarks, filterSSMLWithLang } from '@/utils/ssml';
 import { TTSController } from './TTSController';
 import { TTSGranularity, TTSVoice, TTSVoicesGroup } from './types';
+import { simpleHash } from './utils';
 
 /**
  * OfflineTTSClient - Plays pre-downloaded TTS audio chunks from IndexedDB
  * Implements TTSClient interface for seamless integration with TTSController
  *
  * Playback Strategy:
- * - Downloads are stored at section level (e.g., chapter)
- * - Playback streams section audio as one continuous stream
- * - Simulates mark events for highlighting by emitting boundary events at reasonable intervals
- * - Gracefully falls back to other TTS clients if offline audio unavailable
+ * - Audio is stored per-block (matching Foliate TTS block/paragraph structure)
+ * - Each speak() call receives SSML for one block and plays matching audio
+ * - Marks within the block are used for highlighting synchronization
+ * - TTSController handles progression between blocks via forward()
  */
 export class OfflineTTSClient implements TTSClient {
   name = 'offline-tts';
@@ -63,7 +64,29 @@ export class OfflineTTSClient implements TTSClient {
   }
 
   /**
-   * Main speak method - plays offline audio for the entire section
+   * Preprocess SSML to match TTSController's preprocessing logic.
+   * This ensures we match against the same SSML that was stored.
+   */
+  private preprocessSSML(ssml: string, targetLang?: string): string {
+    // Apply same transformations as TTSController#preprocessSSML
+    ssml = ssml
+      .replace(/<emphasis[^>]*>([^<]+)<\/emphasis>/g, '$1')
+      .replace(/[–—]/g, ',')
+      .replace('<break/>', ' ')
+      .replace(/\.{3,}/g, '   ')
+      .replace(/……/g, '  ')
+      .replace(/\*/g, ' ')
+      .replace(/·/g, ' ');
+
+    if (targetLang) {
+      ssml = filterSSMLWithLang(ssml, targetLang);
+    }
+    return ssml;
+  }
+
+  /**
+   * Main speak method - plays offline audio for a single block/paragraph
+   * The SSML passed in is for one block (matching Foliate TTS structure)
    * Returns error code if audio not available (fallback to other client)
    */
   async *speak(
@@ -76,51 +99,27 @@ export class OfflineTTSClient implements TTSClient {
       return;
     }
 
-    // Load metadata for this section
-    const metadata = await offlineAudioStorage.getMarkMetadata(
-      this.#bookHash,
-      this.#sectionHref,
-      this.#voiceId,
-    );
+    // Preprocess SSML to match what was stored during download
+    // Use controller's targetLang if available
+    const targetLang = this.controller?.ttsTargetLang || undefined;
+    const preprocessedSSML = this.preprocessSSML(ssml, targetLang);
 
-    if (!metadata) {
-      yield {
-        code: 'error',
-        message: 'No offline audio metadata found for this section',
-      } as TTSMessageEvent;
+    // Parse the incoming SSML to get marks for this block
+    const { plainText, marks } = parseSSMLMarks(preprocessedSSML, this.#speakingLang);
+
+    if (!plainText || marks.length === 0) {
+      yield { code: 'error', message: 'No content in SSML' } as TTSMessageEvent;
       return;
     }
 
-    // Validate content hasn't changed
-    const { marks } = parseSSMLMarks(ssml, this.#speakingLang);
-    // const currentContentHash = simpleHash(plainText);
+    // Find matching audio chunk by content hash
+    const contentHash = simpleHash(plainText);
+    const audioChunk = await this.findAudioChunkByContent(contentHash, plainText);
 
-    // if (currentContentHash !== metadata.contentHash) {
-    //   console.warn('Book content changed, offline audio may be out of sync');
-    //   yield {
-    //     code: 'error',
-    //     message: 'Content mismatch - book may have been updated',
-    //   } as TTSMessageEvent;
-    //   return;
-    // }
-
-    // // Validate marks match
-    // if (marks.length !== metadata.marks.length) {
-    //   console.warn(`Mark count mismatch: ${marks.length} vs ${metadata.marks.length}`);
-    //   yield {
-    //     code: 'error',
-    //     message: 'Mark mismatch - regenerate offline audio',
-    //   } as TTSMessageEvent;
-    //   return;
-    // }
-
-    // Try to get stored audio chunks for this section
-    const audioChunks = await this.getAudioChunksForSection();
-
-    if (audioChunks.length === 0) {
+    if (!audioChunk) {
       yield {
         code: 'error',
-        message: 'No offline audio available for this section',
+        message: 'No offline audio available for this block',
       } as TTSMessageEvent;
       return;
     }
@@ -147,9 +146,7 @@ export class OfflineTTSClient implements TTSClient {
     let abortHandler: null | (() => void) = null;
 
     try {
-      // Create a blob from all chunks for seamless playback
-      const combinedBlob = await this.combineAudioChunks(audioChunks);
-      const audioUrl = URL.createObjectURL(combinedBlob);
+      const audioUrl = URL.createObjectURL(audioChunk.audioBlob);
 
       if (signal.aborted) {
         URL.revokeObjectURL(audioUrl);
@@ -157,9 +154,12 @@ export class OfflineTTSClient implements TTSClient {
         return;
       }
 
+      // Estimate mark timing by distributing audio duration across marks
+      const audioDuration = await this.getAudioDuration(audioChunk.audioBlob);
+      const markTimings = this.estimateMarkTimings(marks, audioDuration);
+
       // Set up mark emission based on timing
       let currentMarkIndex = 0;
-      const markTimings = metadata.marks;
 
       audio.ontimeupdate = () => {
         const currentTime = audio.currentTime * 1000; // convert to ms
@@ -168,7 +168,7 @@ export class OfflineTTSClient implements TTSClient {
           const markTiming = markTimings[currentMarkIndex]!;
           const correspondingMark = marks[currentMarkIndex];
 
-          if (currentTime >= markTiming.audioOffset) {
+          if (currentTime >= markTiming.offset) {
             // Emit mark event for highlighting
             if (correspondingMark) {
               this.controller?.dispatchSpeakMark(correspondingMark);
@@ -180,17 +180,17 @@ export class OfflineTTSClient implements TTSClient {
         }
       };
 
-      // Emit boundary event for section start
+      // Emit boundary event for block start
       const firstMark = marks[0];
       if (firstMark) {
         yield {
           code: 'boundary',
-          message: `Start section audio: ${this.#sectionHref}`,
+          message: `Start block audio`,
           mark: firstMark.name,
         } as TTSMessageEvent;
       }
 
-      // Play the combined audio
+      // Play the audio
       const result = await new Promise<TTSMessageEvent>((resolve) => {
         const cleanUp = () => {
           audio.onended = null;
@@ -214,7 +214,7 @@ export class OfflineTTSClient implements TTSClient {
 
         audio.onended = () => {
           cleanUp();
-          resolve({ code: 'end', message: `Section audio finished: ${this.#sectionHref}` });
+          resolve({ code: 'end', message: 'Block audio finished' });
         };
 
         audio.onerror = (e) => {
@@ -245,66 +245,92 @@ export class OfflineTTSClient implements TTSClient {
   }
 
   /**
-   * Get all audio chunks for a section
-   * Handles block-level chunks stored as href#block-N
+   * Find an audio chunk that matches the given content
+   * Uses content hash for fast lookup, falls back to text comparison
    */
-  private async getAudioChunksForSection(): Promise<OfflineAudioRecord[]> {
+  private async findAudioChunkByContent(
+    contentHash: string,
+    plainText: string,
+  ): Promise<OfflineAudioRecord | null> {
     try {
       const allAudio = await offlineAudioStorage.getBookAudio(this.#bookHash);
 
-      // Filter for this section and voice (includes both href and href#block-N)
+      // Filter for this section and voice
       const sectionAudio = allAudio.filter(
         (record) =>
-          (record.href === this.#sectionHref ||
-            record.href.startsWith(`${this.#sectionHref}#block-`)) &&
-          record.voiceId === this.#voiceId,
+          record.href.startsWith(this.#sectionHref) && record.voiceId === this.#voiceId,
       );
 
-      // Sort by block index if multi-chunk
-      return sectionAudio.sort((a, b) => {
-        const aChunk = parseInt(a.href.split('#block-')[1] || '0');
-        const bChunk = parseInt(b.href.split('#block-')[1] || '0');
-        return aChunk - bChunk;
+      // First try to match by content hash
+      for (const record of sectionAudio) {
+        const recordHash = simpleHash(record.text);
+        if (recordHash === contentHash) {
+          return record;
+        }
+      }
+
+      // Fallback: try to match by normalized text
+      // TODO this probably won't help but maybe there are some other ideas for fallback
+      const normalizedPlainText = plainText.trim().toLowerCase();
+      for (const record of sectionAudio) {
+        const recordText = record.text.trim().toLowerCase();
+        if (recordText === normalizedPlainText) {
+          return record;
+        }
+      }
+
+      console.warn('[OfflineTTSClient] No matching audio chunk found for content:', {
+        contentHash,
+        textPreview: plainText.substring(0, 50),
+        availableChunks: sectionAudio.length,
       });
+
+      return null;
     } catch (error) {
-      console.error('Error retrieving audio chunks:', error);
-      return [];
+      console.error('Error finding audio chunk:', error);
+      return null;
     }
   }
 
   /**
-   * Combine multiple audio chunks into a single blob for seamless playback
+   * Estimate mark timing by distributing audio duration proportionally
    */
-  private async combineAudioChunks(chunks: OfflineAudioRecord[]): Promise<Blob> {
-    if (chunks.length === 0) {
-      return new Blob([], { type: 'audio/mpeg' });
-    }
-
-    if (chunks.length === 1) {
-      return chunks[0]!.audioBlob;
-    }
-
-    // For multiple chunks, concatenate them
-    // Note: Direct concatenation may cause audio artifacts at boundaries
-    // Better: use Web Audio API or store pre-combined in IndexedDB
-    // For now, create a simple concatenation
-    const parts: Uint8Array[] = [];
-
-    for (const chunk of chunks) {
-      const arrayBuffer = await chunk.audioBlob.arrayBuffer();
-      parts.push(new Uint8Array(arrayBuffer));
-    }
-
-    const totalLength = parts.reduce((sum, part) => sum + part.length, 0);
-    const combined = new Uint8Array(totalLength);
-
+  private estimateMarkTimings(
+    marks: Array<{ name: string; text: string; offset: number; language: string }>,
+    totalDuration: number,
+  ): Array<{ name: string; offset: number; duration: number }> {
+    const totalChars = marks.reduce((sum, m) => sum + m.text.length, 0);
     let offset = 0;
-    for (const part of parts) {
-      combined.set(part, offset);
-      offset += part.length;
-    }
 
-    return new Blob([combined], { type: 'audio/mpeg' });
+    return marks.map((mark) => {
+      const duration = (mark.text.length / Math.max(totalChars, 1)) * totalDuration;
+      const result = { name: mark.name, offset, duration };
+      offset += duration;
+      return result;
+    });
+  }
+
+  /**
+   * Get audio duration in milliseconds
+   */
+  private async getAudioDuration(blob: Blob): Promise<number> {
+    return new Promise((resolve) => {
+      const audio = new Audio();
+      audio.preload = 'metadata';
+
+      audio.onloadedmetadata = () => {
+        const duration = audio.duration * 1000; // convert to ms
+        URL.revokeObjectURL(audio.src);
+        resolve(duration);
+      };
+
+      audio.onerror = () => {
+        URL.revokeObjectURL(audio.src);
+        resolve(5000); // Default 5 seconds if can't load TODO not sure if this is helpful
+      };
+
+      audio.src = URL.createObjectURL(blob);
+    });
   }
 
   async pause(): Promise<boolean> {
