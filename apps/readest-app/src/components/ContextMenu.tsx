@@ -11,8 +11,8 @@ interface ContextMenuProps {
 const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, onClose, children }) => {
   const menuRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {    
-    const handleClickOutside = (e: MouseEvent) => {
+  useEffect(() => {
+    const handlePointerOutside = (e: MouseEvent | TouchEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         onClose();
       }
@@ -24,11 +24,15 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, onClose, children }) =>
       }
     };
 
-    document.addEventListener('mousedown', handleClickOutside);
+    const touchOptions: AddEventListenerOptions = { passive: true };
+
+    document.addEventListener('mousedown', handlePointerOutside);
+    document.addEventListener('touchstart', handlePointerOutside, touchOptions);
     document.addEventListener('keydown', handleEscape);
 
     return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('mousedown', handlePointerOutside);
+      document.removeEventListener('touchstart', handlePointerOutside, touchOptions);
       document.removeEventListener('keydown', handleEscape);
     };
   }, [onClose, x, y]);
