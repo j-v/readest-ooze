@@ -61,9 +61,10 @@ export class TTSController extends EventTarget {
 
   async init() {
     const availableClients = [];
-    if (await this.ttsOfflineClient.init()) {
-      availableClients.push(this.ttsOfflineClient);
-    }
+    // Initialize offline client but don't add to availableClients
+    // It should only be used when explicitly enabled via tryUseOfflineAudio
+    await this.ttsOfflineClient.init();
+    
     if (await this.ttsEdgeClient.init()) {
       availableClients.push(this.ttsEdgeClient);
     }
@@ -103,8 +104,9 @@ export class TTSController extends EventTarget {
   }
 
   /**
-   * Try to use offline audio playback if available, otherwise use active TTS client
+   * Try to use offline audio playback if available, otherwise keep using active TTS client
    * This method should be called before speak() when offline audio might be available
+   * Returns true if switched to offline mode, false otherwise
    */
   async tryUseOfflineAudio(
     bookHash: string,
@@ -112,19 +114,46 @@ export class TTSController extends EventTarget {
     voiceId: string,
     lang?: string,
   ): Promise<boolean> {
-    if (!this.ttsOfflineClient.setContext) {
+    if (!this.ttsOfflineClient.setContext || !this.ttsOfflineClient.initialized) {
       return false;
     }
+    
+    // Set context then check if audio is available
     this.ttsOfflineClient.setContext(bookHash, sectionHref, voiceId, lang);
-    return true;
+
+    const hasAudio = await (this.ttsOfflineClient as OfflineTTSClient).hasOfflineAudio();
+    
+    if (hasAudio) {
+      // Store the current online client before switching -- TODO use this for restoring in disableOfflineAudio?
+      const currentClient = this.ttsClient;
+      this.ttsClient = this.ttsOfflineClient;
+      await this.ttsClient.setRate(this.ttsRate);
+      console.log('Switched to offline TTS - audio available for section');
+      return true;
+    }
+    
+    console.log('Offline audio not available, using online TTS');
+    return false;
   }
 
   /**
    * Revert to the primary TTS client (not offline)
    */
-  disableOfflineAudio(): void {
+  async disableOfflineAudio(): Promise<void> {
     if (this.ttsClient.name === 'offline-tts') {
-      this.ttsClient = this.ttsEdgeClient.initialized ? this.ttsEdgeClient : this.ttsWebClient;
+      // Revert to the preferred client based on saved preferences
+      const preferredClientName = TTSUtils.getPreferredClient();
+      if (preferredClientName === 'native-tts' && this.ttsNativeClient?.initialized) {
+        this.ttsClient = this.ttsNativeClient;
+      } else if (preferredClientName === 'edge-tts' && this.ttsEdgeClient.initialized) {
+        this.ttsClient = this.ttsEdgeClient;
+      } else if (this.ttsEdgeClient.initialized) {
+        this.ttsClient = this.ttsEdgeClient;
+      } else {
+        this.ttsClient = this.ttsWebClient;
+      }
+      await this.ttsClient.setRate(this.ttsRate);
+      console.log('Switched back to online TTS:', this.ttsClient.name);
     }
   }
 

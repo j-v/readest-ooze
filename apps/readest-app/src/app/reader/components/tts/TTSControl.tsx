@@ -346,15 +346,11 @@ const TTSControl: React.FC<TTSControlProps> = ({ bookKey, gridInsets }) => {
           const currentHref = progress?.sectionHref || '';
 
           if (currentHref && bookId) {
-            await offlineAudioManager.init();
-            const status = await offlineAudioManager.getStatus(bookId, voiceId);
-
-            // Check if offline audio is available for this section
-            if (status.downloadedHrefs.has(currentHref)) {
-              console.log('Using offline audio for section:', currentHref);
-              await ttsController.tryUseOfflineAudio(bookId, currentHref, voiceId, lang);
-              // Set client to offline for this playback
-              ttsController.ttsClient = ttsController.ttsOfflineClient;
+            const usingOffline = await ttsController.tryUseOfflineAudio(bookId, currentHref, voiceId, lang);
+            if (usingOffline) {
+              console.log('Using offline TTS for section:', currentHref);
+            } else {
+              console.log('Using online TTS for section:', currentHref);
             }
           }
         } catch (err) {

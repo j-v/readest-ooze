@@ -182,8 +182,7 @@ class OfflineAudioStorage {
             id: r.id,
             href: r.href,
             voiceId: r.voiceId,
-            blobSize: r.audioBlob?.size,
-            blobType: r.audioBlob?.type || '(empty)',
+            audioDataSize: r.audioData?.length || 0,
             downloadedAt: new Date(r.downloadedAt).toISOString(),
           })),
         });

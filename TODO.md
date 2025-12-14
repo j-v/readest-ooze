@@ -1,16 +1,15 @@
 next step
-- Figure out how to get it running on my phone
+- deploy as app
 
 issues with offline audio
-- iOS - cant long click to download
-- not working in safari
+- doesn't switch to offline if started in online TTS
 - can web app be run offline? (specifically in iOS)
 - progress completely broken?
 - navigation (next/prev sentence) broken because of structure of SMLL chunks
+  - next section works 
 - error handling
  - no matching audio chunk
 - cancel doesn't work (at least not immediately)
-
 
 offline audio improvements
 - custom voice

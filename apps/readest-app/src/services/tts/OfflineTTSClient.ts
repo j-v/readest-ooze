@@ -24,7 +24,6 @@ export class OfflineTTSClient implements TTSClient {
   #sectionHref: string = '';
   #voiceId: string = '';
   #speakingLang: string = 'en';
-  #audioElement: HTMLAudioElement | null = null;
   #audioContext: AudioContext | null = null;
   #audioBuffer: AudioBuffer | null = null;
   #bufferSource: AudioBufferSourceNode | null = null;
@@ -133,6 +132,39 @@ export class OfflineTTSClient implements TTSClient {
     this.#sectionHref = sectionHref;
     this.#voiceId = voiceId;
     if (lang) this.#speakingLang = lang;
+  }
+
+  /**
+   * Check if offline audio is available for the current context
+   * Must be called after setContext()
+   * Returns: Promise<boolean> - true if offline audio chunks exist for this section
+   */
+  async hasOfflineAudio(): Promise<boolean> {
+    if (!this.#bookHash || !this.#sectionHref || !this.#voiceId) {
+      console.warn('[OfflineTTSClient] hasOfflineAudio called without context set');
+      return false;
+    }
+    
+    try {
+      const allAudio = await offlineAudioStorage.getBookAudio(this.#bookHash);
+      const sectionAudio = allAudio.filter(
+        (record) => record.href.startsWith(this.#sectionHref) && record.voiceId === this.#voiceId,
+      );
+      
+      const hasAudio = sectionAudio.length > 0;
+      console.log('[OfflineTTSClient] hasOfflineAudio check:', {
+        bookHash: this.#bookHash,
+        sectionHref: this.#sectionHref,
+        voiceId: this.#voiceId,
+        chunksAvailable: sectionAudio.length,
+        hasAudio,
+      });
+      
+      return hasAudio;
+    } catch (error) {
+      console.error('[OfflineTTSClient] Error checking audio availability:', error);
+      return false;
+    }
   }
 
 
