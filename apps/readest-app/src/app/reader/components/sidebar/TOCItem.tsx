@@ -1,10 +1,11 @@
 import clsx from 'clsx';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback } from 'react';
 import { ListChildComponentProps } from 'react-window';
 import { MdCheckCircle, MdDownload, MdDelete, MdAccessTime } from 'react-icons/md';
 import { TOCItem } from '@/libs/document';
 import { getContentMd5 } from '@/utils/misc';
 import ContextMenu from '@/components/ContextMenu';
+import { useLongPressContextMenu } from '@/hooks/useLongPressContextMenu';
 
 const createExpanderIcon = (isExpanded: boolean) => {
   return (
@@ -44,12 +45,20 @@ const TOCItemView = React.memo<{
   onDeleteSection?: (item: TOCItem) => void;
 }>(({ flatItem, itemSize, isActive, isDownloaded, isDownloading, onToggleExpand, onItemClick, onDownloadSection, onDeleteSection }) => {
   const { item, depth } = flatItem;
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
-  const touchStartTimeRef = React.useRef<number>(0);
-  const touchStartPosRef = React.useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const longPressTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
-  const contextMenuRef = useRef<HTMLDivElement | null>(null);
-  const itemRef = useRef<HTMLDivElement | null>(null);
+  const {
+    coords: contextMenu,
+    closeMenu,
+    triggerRef: itemRef,
+    menuRef: contextMenuRef,
+    triggerProps,
+    triggerStyle,
+    wrapMenuAction,
+    shouldPreventClick,
+  } = useLongPressContextMenu({
+    disabled: !item.href || (!onDownloadSection && !onDeleteSection),
+    longPressMs: 500,
+    moveThreshold: 30,
+  });
 
   const handleToggleExpand = useCallback(
     (event: React.MouseEvent) => {
@@ -62,133 +71,28 @@ const TOCItemView = React.memo<{
 
   const handleClickItem = useCallback(
     (event: React.MouseEvent | React.KeyboardEvent) => {
+      if (shouldPreventClick()) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       event.preventDefault();
       onItemClick(item);
     },
-    [item, onItemClick],
+    [item, onItemClick, shouldPreventClick],
   );
 
-  const handleContextMenu = useCallback(
-    (e: React.MouseEvent) => {
-      if (!item.href || (!onDownloadSection && !onDeleteSection)) return;
-      e.preventDefault();
-      e.stopPropagation();
-      setContextMenu({ x: e.clientX, y: e.clientY });
-    },
-    [item.href, onDownloadSection, onDeleteSection],
-  );
+  const handleDownload = wrapMenuAction(() => {
+    if (onDownloadSection) {
+      onDownloadSection(item);
+    }
+  });
 
-  const handleTouchStart = useCallback(
-    (e: React.TouchEvent) => {
-      if (!item.href || (!onDownloadSection && !onDeleteSection)) return;
-      touchStartTimeRef.current = Date.now();
-      const touch = e.touches[0];
-      if (touch) {
-        touchStartPosRef.current = { x: touch.clientX, y: touch.clientY };
-      }
-      
-      // Set up long press detection
-      longPressTimeoutRef.current = setTimeout(() => {
-        if (touch) {
-          setContextMenu({ x: touch.clientX, y: touch.clientY });
-        }
-      }, 500);
-    },
-    [item.href, onDownloadSection, onDeleteSection],
-  );
-
-  const handleTouchEnd = useCallback(
-    () => {
-      // Clear the long press timeout if touch ends before 500ms
-      if (longPressTimeoutRef.current) {
-        clearTimeout(longPressTimeoutRef.current);
-        longPressTimeoutRef.current = null;
-      }
-    },
-    [],
-  );
-
-  const handleTouchMove = useCallback(
-    (e: React.TouchEvent) => {
-      // Cancel long press if user moves touch significantly
-      const touch = e.touches[0];
-      if (touch) {
-        const dx = Math.abs(touch.clientX - touchStartPosRef.current.x);
-        const dy = Math.abs(touch.clientY - touchStartPosRef.current.y);
-        const moveThreshold = 10; // pixels
-        
-        if (dx > moveThreshold || dy > moveThreshold) {
-          if (longPressTimeoutRef.current) {
-            clearTimeout(longPressTimeoutRef.current);
-            longPressTimeoutRef.current = null;
-          }
-        }
-      }
-    },
-    [],
-  );
-
-  const handleDownload = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation();
-      if (onDownloadSection) {
-        onDownloadSection(item);
-      }
-      setContextMenu(null);
-    },
-    [item, onDownloadSection],
-  );
-
-  const handleDelete = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation();
-      if (onDeleteSection) {
-        onDeleteSection(item);
-      }
-      setContextMenu(null);
-    },
-    [item, onDeleteSection],
-  );
-
-  useEffect(() => {
-    if (!contextMenu) return;
-
-    const handleOutsideClick = (e: MouseEvent | TouchEvent) => {
-      // Check if click/touch is outside the context menu and the triggering item
-      if (contextMenuRef.current && itemRef.current) {
-        const contextMenuElement = contextMenuRef.current.querySelector('ul');
-        if (
-          contextMenuElement &&
-          !contextMenuElement.contains(e.target as Node) &&
-          !itemRef.current.contains(e.target as Node)
-        ) {
-          setContextMenu(null);
-        }
-      }
-    };
-
-    const handleTouchMoveDismiss = (e: TouchEvent) => {
-      // Allow small finger drift; dismiss only after noticeable movement
-      const touch = e.touches[0];
-      if (!touch) return;
-      const dx = Math.abs(touch.clientX - touchStartPosRef.current.x);
-      const dy = Math.abs(touch.clientY - touchStartPosRef.current.y);
-      const moveThreshold = 30; // pixels
-      if (dx > moveThreshold || dy > moveThreshold) {
-        setContextMenu(null);
-      }
-    };
-
-    document.addEventListener('click', handleOutsideClick);
-    document.addEventListener('touchend', handleOutsideClick);
-    document.addEventListener('touchmove', handleTouchMoveDismiss, { passive: true });
-
-    return () => {
-      document.removeEventListener('click', handleOutsideClick);
-      document.removeEventListener('touchend', handleOutsideClick);
-      document.removeEventListener('touchmove', handleTouchMoveDismiss);
-    };
-  }, [contextMenu]);
+  const handleDelete = wrapMenuAction(() => {
+    if (onDeleteSection) {
+      onDeleteSection(item);
+    }
+  });
 
   return (
     <>
@@ -198,10 +102,7 @@ const TOCItemView = React.memo<{
         role='treeitem'
         onClick={item.href ? handleClickItem : undefined}
         onKeyDown={item.href ? (e) => e.key === 'Enter' && handleClickItem(e) : undefined}
-        onContextMenu={handleContextMenu}
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
-        onTouchMove={handleTouchMove}
+        {...triggerProps}
         aria-expanded={flatItem.isExpanded ? 'true' : 'false'}
         aria-selected={isActive ? 'true' : 'false'}
         data-href={item.href ? getContentMd5(item.href) : undefined}
@@ -214,6 +115,7 @@ const TOCItemView = React.memo<{
       style={{
         height: itemSize ? `${itemSize}px` : 'auto',
         paddingInlineStart: `${(depth + 1) * 12}px`,
+        ...triggerStyle,
       }}
     >
       {item.subitems && (
@@ -267,11 +169,15 @@ const TOCItemView = React.memo<{
           <ContextMenu
             x={contextMenu.x}
             y={contextMenu.y}
-            onClose={() => setContextMenu(null)}
+            onClose={closeMenu}
           >
             {!isDownloaded && onDownloadSection && (
               <li>
-                <button onClick={handleDownload} className='flex items-center gap-2'>
+                <button 
+                  onClick={handleDownload}
+                  onTouchEnd={handleDownload}
+                  className='flex items-center gap-2'
+                >
                   <MdDownload size={16} />
                   <span>Download Audio</span>
                 </button>
@@ -279,7 +185,11 @@ const TOCItemView = React.memo<{
             )}
             {isDownloaded && onDeleteSection && (
               <li>
-                <button onClick={handleDelete} className='flex items-center gap-2 text-error'>
+                <button 
+                  onClick={handleDelete}
+                  onTouchEnd={handleDelete}
+                  className='flex items-center gap-2 text-error'
+                >
                   <MdDelete size={16} />
                   <span>Delete Audio</span>
                 </button>
