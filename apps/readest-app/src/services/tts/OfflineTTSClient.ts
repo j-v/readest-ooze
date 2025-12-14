@@ -25,12 +25,84 @@ export class OfflineTTSClient implements TTSClient {
   #voiceId: string = '';
   #speakingLang: string = 'en';
   #audioElement: HTMLAudioElement | null = null;
+  #audioContext: AudioContext | null = null;
+  #audioBuffer: AudioBuffer | null = null;
+  #bufferSource: AudioBufferSourceNode | null = null;
   #isPlaying = false;
-  #pausedAt = 0;
-  #startedAt = 0;
+  #pausedAt = 0; // in seconds relative to buffer
+  #playStartCtxTime = 0; // AudioContext.currentTime when started
+  #markInterval: number | null = null;
+  #currentMarkTimings: Array<{ name: string; offset: number; duration: number }> = [];
+  #currentMarks: Array<{ name: string; text: string; offset: number; language: string }> = [];
 
   constructor(controller?: TTSController) {
     this.controller = controller;
+  }
+
+  private getOrCreateAudioContext(): AudioContext {
+    if (!this.#audioContext) {
+      this.#audioContext = new AudioContext();
+    }
+    return this.#audioContext;
+  }
+
+  private stopMarkInterval() {
+    if (this.#markInterval !== null) {
+      clearInterval(this.#markInterval);
+      this.#markInterval = null;
+    }
+  }
+
+  private startMarkScheduler(
+    markTimings: Array<{ name: string; offset: number; duration: number }>,
+    marks: Array<{ name: string; text: string; offset: number; language: string }>,
+    audioContext: AudioContext,
+    offsetMs: number,
+  ) {
+    let currentMarkIndex = 0;
+    while (currentMarkIndex < markTimings.length && markTimings[currentMarkIndex]!.offset <= offsetMs) {
+      currentMarkIndex++;
+    }
+
+    this.stopMarkInterval();
+    this.#markInterval = window.setInterval(() => {
+      const elapsedMs = (audioContext.currentTime - this.#playStartCtxTime) * 1000;
+      while (currentMarkIndex < markTimings.length) {
+        const markTiming = markTimings[currentMarkIndex]!;
+        const correspondingMark = marks[currentMarkIndex];
+        if (elapsedMs >= markTiming.offset) {
+          if (correspondingMark) {
+            this.controller?.dispatchSpeakMark(correspondingMark);
+          }
+          currentMarkIndex++;
+        } else {
+          break;
+        }
+      }
+    }, 50);
+  }
+
+  private stopBufferSource() {
+    if (this.#bufferSource) {
+      this.#bufferSource.onended = null;
+      try {
+        this.#bufferSource.stop();
+      } catch (err) {
+        console.warn('[OfflineTTSClient] stopBufferSource error:', err);
+      }
+      this.#bufferSource.disconnect();
+      this.#bufferSource = null;
+    }
+    this.stopMarkInterval();
+  }
+
+  private base64ToArrayBuffer(base64: string): ArrayBuffer {
+    const binaryString = atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes.buffer;
   }
 
   async init(): Promise<boolean> {
@@ -88,6 +160,14 @@ export class OfflineTTSClient implements TTSClient {
       yield { code: 'error', message: 'Offline client context not set' } as TTSMessageEvent;
       return;
     }
+    // For preload mode, just simulate success
+    if (preload) {
+      yield {
+        code: 'end',
+        message: 'Preload finished',
+      } as TTSMessageEvent;
+      return;
+    }
 
     // Preprocess SSML to match what was stored during download
     // Use controller's targetLang if available
@@ -110,9 +190,18 @@ export class OfflineTTSClient implements TTSClient {
 
     // Find matching audio chunk by content hash
     const contentHash = simpleHash(plainText);
+    console.log('[OfflineTTSClient] Looking for audio chunk:', {
+      bookHash: this.#bookHash,
+      sectionHref: this.#sectionHref,
+      voiceId: this.#voiceId,
+      contentHash,
+      textPreview: plainText.substring(0, 100),
+      textLength: plainText.length,
+    });
     const audioChunk = await this.findAudioChunkByContent(contentHash, plainText);
 
     if (!audioChunk) {
+      console.warn('[OfflineTTSClient] No audio chunk found for content');
       yield {
         code: 'error',
         message: 'No offline audio available for this block',
@@ -120,7 +209,14 @@ export class OfflineTTSClient implements TTSClient {
       return;
     }
 
-    // For preload mode, just verify availability
+    console.log('[OfflineTTSClient] Found audio chunk:', {
+      id: audioChunk.id,
+      audioDataSize: audioChunk.audioData.length,
+      downloadedAt: new Date(audioChunk.downloadedAt).toISOString(),
+      textLength: audioChunk.text.length,
+    });
+
+    // For preload mode, just verify availability TODO delete
     if (preload) {
       yield {
         code: 'end',
@@ -132,49 +228,28 @@ export class OfflineTTSClient implements TTSClient {
     // Normal playback mode
     await this.stopInternal();
 
-    if (!this.#audioElement) {
-      this.#audioElement = new Audio();
-    }
-    const audio = this.#audioElement;
-    audio.setAttribute('x-webkit-airplay', 'deny');
-    audio.preload = 'auto';
-
     let abortHandler: null | (() => void) = null;
 
     try {
-      const audioUrl = URL.createObjectURL(audioChunk.audioBlob);
-
-      if (signal.aborted) {
-        URL.revokeObjectURL(audioUrl);
-        yield { code: 'error', message: 'Aborted' } as TTSMessageEvent;
+      // Validate audio data
+      if (!audioChunk.audioData || audioChunk.audioData.length === 0) {
+        console.error('[OfflineTTSClient] Invalid audio data:', {
+          hasData: !!audioChunk.audioData,
+          length: audioChunk.audioData?.length,
+        });
+        yield { code: 'error', message: 'Invalid audio data' } as TTSMessageEvent;
         return;
       }
 
-      // Estimate mark timing by distributing audio duration across marks
-      const audioDuration = await this.getAudioDuration(audioChunk.audioBlob);
+      const arrayBuffer = this.base64ToArrayBuffer(audioChunk.audioData);
+      const audioContext = this.getOrCreateAudioContext();
+      const decodedBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+      this.#audioBuffer = decodedBuffer;
+
+      const audioDuration = decodedBuffer.duration * 1000;
       const markTimings = this.estimateMarkTimings(marks, audioDuration);
-
-      // Set up mark emission based on timing
-      let currentMarkIndex = 0;
-
-      audio.ontimeupdate = () => {
-        const currentTime = audio.currentTime * 1000; // convert to ms
-
-        while (currentMarkIndex < markTimings.length) {
-          const markTiming = markTimings[currentMarkIndex]!;
-          const correspondingMark = marks[currentMarkIndex];
-
-          if (currentTime >= markTiming.offset) {
-            // Emit mark event for highlighting
-            if (correspondingMark) {
-              this.controller?.dispatchSpeakMark(correspondingMark);
-            }
-            currentMarkIndex++;
-          } else {
-            break; // Wait for audio to catch up
-          }
-        }
-      };
+      this.#currentMarkTimings = markTimings;
+      this.#currentMarks = marks;
 
       // Emit boundary event for block start
       const firstMark = marks[0];
@@ -186,46 +261,50 @@ export class OfflineTTSClient implements TTSClient {
         } as TTSMessageEvent;
       }
 
-      // Play the audio
       const result = await new Promise<TTSMessageEvent>((resolve) => {
-        const cleanUp = () => {
-          audio.onended = null;
-          audio.onerror = null;
-          audio.ontimeupdate = null;
-          audio.src = '';
-          URL.revokeObjectURL(audioUrl);
+        const startPlayback = (offsetSeconds: number) => {
+          if (!this.#audioBuffer) {
+            resolve({ code: 'error', message: 'No audio buffer' });
+            return;
+          }
+
+          const source = audioContext.createBufferSource();
+          source.buffer = this.#audioBuffer;
+          source.connect(audioContext.destination);
+          this.#bufferSource = source;
+          this.#isPlaying = true;
+          this.#playStartCtxTime = audioContext.currentTime - offsetSeconds;
+          this.startMarkScheduler(markTimings, marks, audioContext, offsetSeconds * 1000);
+
+          source.onended = () => {
+            this.stopMarkInterval();
+            this.#isPlaying = false;
+            resolve({ code: 'end', message: 'Block audio finished' });
+          };
+
+          try {
+            source.start(0, offsetSeconds);
+          } catch (err) {
+            this.stopMarkInterval();
+            this.#isPlaying = false;
+            console.error('[OfflineTTSClient] AudioContext start failed:', err);
+            resolve({ code: 'error', message: 'Playback failed: ' + (err as Error).message });
+          }
         };
 
         abortHandler = () => {
-          cleanUp();
+          this.stopBufferSource();
+          this.#isPlaying = false;
           resolve({ code: 'error', message: 'Aborted' });
         };
 
         if (signal.aborted) {
           abortHandler();
           return;
-        } else {
-          signal.addEventListener('abort', abortHandler);
         }
+        signal.addEventListener('abort', abortHandler);
 
-        audio.onended = () => {
-          cleanUp();
-          resolve({ code: 'end', message: 'Block audio finished' });
-        };
-
-        audio.onerror = (e) => {
-          cleanUp();
-          console.warn('Offline audio playback error:', e);
-          resolve({ code: 'error', message: 'Audio playback error' });
-        };
-
-        this.#isPlaying = true;
-        audio.src = audioUrl;
-        audio.play().catch((err) => {
-          cleanUp();
-          console.error('Failed to play offline audio:', err);
-          resolve({ code: 'error', message: 'Playback failed: ' + err.message });
-        });
+        startPlayback(0);
       });
 
       yield result;
@@ -306,42 +385,48 @@ export class OfflineTTSClient implements TTSClient {
     });
   }
 
-  /**
-   * Get audio duration in milliseconds
-   */
-  private async getAudioDuration(blob: Blob): Promise<number> {
-    return new Promise((resolve) => {
-      const audio = new Audio();
-      audio.preload = 'metadata';
-
-      audio.onloadedmetadata = () => {
-        const duration = audio.duration * 1000; // convert to ms
-        URL.revokeObjectURL(audio.src);
-        resolve(duration);
-      };
-
-      audio.onerror = () => {
-        URL.revokeObjectURL(audio.src);
-        resolve(5000); // Default 5 seconds if can't load TODO not sure if this is helpful
-      };
-
-      audio.src = URL.createObjectURL(blob);
-    });
-  }
-
   async pause(): Promise<boolean> {
-    if (!this.#isPlaying || !this.#audioElement) return true;
-    this.#pausedAt = this.#audioElement.currentTime - this.#startedAt;
-    await this.#audioElement.pause();
+    if (!this.#isPlaying) return true;
+    if (!this.#audioContext || !this.#bufferSource) return true;
+    const elapsed = this.#audioContext.currentTime - this.#playStartCtxTime;
+    this.#pausedAt = Math.max(elapsed, 0);
+    this.stopBufferSource();
     this.#isPlaying = false;
     return true;
   }
 
   async resume(): Promise<boolean> {
-    if (this.#isPlaying || !this.#audioElement) return true;
-    await this.#audioElement.play();
+    if (this.#isPlaying) return true;
+    if (!this.#audioBuffer || !this.#audioContext) return true;
+    const audioContext = this.#audioContext;
+    const source = audioContext.createBufferSource();
+    source.buffer = this.#audioBuffer;
+    source.connect(audioContext.destination);
+    this.#bufferSource = source;
+    this.#playStartCtxTime = audioContext.currentTime - this.#pausedAt;
     this.#isPlaying = true;
-    this.#startedAt = this.#audioElement.currentTime - this.#pausedAt;
+
+    if (this.#currentMarkTimings.length && this.#currentMarks.length) {
+      this.startMarkScheduler(
+        this.#currentMarkTimings,
+        this.#currentMarks,
+        audioContext,
+        this.#pausedAt * 1000,
+      );
+    }
+
+    source.onended = () => {
+      this.stopMarkInterval();
+      this.#isPlaying = false;
+    };
+
+    try {
+      source.start(0, this.#pausedAt);
+    } catch (err) {
+      console.error('[OfflineTTSClient] Resume failed:', err);
+      this.stopBufferSource();
+      this.#isPlaying = false;
+    }
     return true;
   }
 
@@ -352,15 +437,7 @@ export class OfflineTTSClient implements TTSClient {
   private async stopInternal(): Promise<void> {
     this.#isPlaying = false;
     this.#pausedAt = 0;
-    this.#startedAt = 0;
-    if (this.#audioElement) {
-      this.#audioElement.pause();
-      this.#audioElement.currentTime = 0;
-      if (this.#audioElement?.onended) {
-        this.#audioElement.onended(new Event('stopped'));
-      }
-      this.#audioElement.src = '';
-    }
+    this.stopBufferSource();
   }
 
   async setRate(_rate: number): Promise<void> {

@@ -8,13 +8,14 @@ export interface OfflineAudioRecord {
   bookHash: string;
   href: string; // TOC href/section identifier
   voiceId: string;
-  audioBlob: Blob;
+  audioData: string; // base64-encoded audio data (more compatible with iOS IndexedDB)
+  durationMs?: number; // optional cached duration to avoid metadata probing
   rate: number;
   pitch: number;
   text: string; // original text for regeneration if needed
   ssml: string; // processed SSML
   downloadedAt: number;
-  size: number; // blob size in bytes
+  size: number; // audio size in bytes
 }
 
 export interface MarkTimingInfo {
@@ -134,7 +135,8 @@ class OfflineAudioStorage {
       ...record,
       id,
       downloadedAt: Date.now(),
-      size: record.audioBlob.size,
+      size: record.size || record.audioData.length,
+      durationMs: record.durationMs,
     };
 
     return new Promise((resolve, reject) => {
@@ -171,8 +173,29 @@ class OfflineAudioStorage {
       const index = store.index('bookHash');
       const request = index.getAll(bookHash);
 
-      request.onsuccess = () => resolve(request.result || []);
-      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const records = request.result || [];
+        console.log('[OfflineAudioStorage] Retrieved audio records:', {
+          bookHash,
+          recordCount: records.length,
+          records: records.map(r => ({
+            id: r.id,
+            href: r.href,
+            voiceId: r.voiceId,
+            blobSize: r.audioBlob?.size,
+            blobType: r.audioBlob?.type || '(empty)',
+            downloadedAt: new Date(r.downloadedAt).toISOString(),
+          })),
+        });
+        resolve(records);
+      };
+      request.onerror = () => {
+        console.error('[OfflineAudioStorage] Error retrieving audio records:', {
+          bookHash,
+          error: request.error,
+        });
+        reject(request.error);
+      };
     });
   }
 

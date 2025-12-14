@@ -107,6 +107,27 @@ class OfflineAudioManager extends EventTarget {
   }
 
   /**
+   * Convert a blob to base64 string for storage in IndexedDB
+   */
+  private blobToBase64(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result;
+        if (typeof result === 'string') {
+          // Remove the data:audio/mpeg;base64, prefix if present
+          const base64 = result.includes(',') ? (result.split(',')[1] || result) : result;
+          resolve(base64);
+        } else {
+          reject(new Error('FileReader did not return string'));
+        }
+      };
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  /**
    * Flatten TOC to get all chapters/sections
    */
   private flattenTOC(toc: TOCItem[]): TOCItem[] {
@@ -184,6 +205,9 @@ class OfflineAudioManager extends EventTarget {
         const arrayBuffer = await response.arrayBuffer();
         const audioBlob = new Blob([arrayBuffer], { type: 'audio/mpeg' });
 
+        // Convert to base64 for IndexedDB storage (iOS compatibility)
+        const base64Audio = await this.blobToBase64(audioBlob);
+
         // Get audio duration
         const chunkDuration = await getAudioDuration(audioBlob);
 
@@ -214,13 +238,14 @@ class OfflineAudioManager extends EventTarget {
           bookHash,
           href: chunkHref,
           voiceId,
-          audioBlob,
+          audioData: base64Audio,
+          durationMs: chunkDuration,
           rate,
           pitch,
           text: plainText,
           ssml: ssml,
-          downloadedAt: Date.now(),
           size: audioBlob.size,
+          downloadedAt: Date.now(),
         });
 
         onProgress?.(chunkIndex + 1, ssmlChunks.length);
@@ -569,9 +594,9 @@ class OfflineAudioManager extends EventTarget {
   /**
    * Get cached audio for playback
    */
-  async getAudio(bookHash: string, href: string, voiceId: string): Promise<Blob | null> {
+  async getAudio(bookHash: string, href: string, voiceId: string): Promise<string | null> {
     const record = await offlineAudioStorage.getAudio(bookHash, href, voiceId);
-    return record?.audioBlob || null;
+    return record?.audioData || null;
   }
 }
 
