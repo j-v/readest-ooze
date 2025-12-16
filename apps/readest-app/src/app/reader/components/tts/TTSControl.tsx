@@ -8,7 +8,6 @@ import { useReaderStore } from '@/store/readerStore';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useResponsiveSize } from '@/hooks/useResponsiveSize';
 import { TTSController, SILENCE_DATA, TTSMark } from '@/services/tts';
-import { offlineAudioManager } from '@/services/tts/OfflineAudioManager';
 import { getMediaSession, TauriMediaSession } from '@/libs/mediaSession';
 import { getPopupPosition, Position } from '@/utils/sel';
 import { eventDispatcher } from '@/utils/event';

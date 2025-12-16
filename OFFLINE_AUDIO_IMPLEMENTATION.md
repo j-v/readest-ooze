@@ -33,12 +33,6 @@ I've implemented a complete offline audio download system for the Readest app th
   - Get total storage used
   - Delete book downloads
 
-### 3. Offline TTS Client (`OfflineEdgeTTSClient.ts`)
-- **Wrapper around EdgeTTSClient** with offline support
-- Implements full TTSClient interface
-- Ready for future enhancement to use cached audio during playback
-- Currently delegates to EdgeTTSClient (offline playback can be added later)
-
 ### 4. UI Components
 
 #### Download Dialog (`OfflineAudioDownload.tsx`)

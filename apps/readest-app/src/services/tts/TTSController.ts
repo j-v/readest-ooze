@@ -125,7 +125,7 @@ export class TTSController extends EventTarget {
     
     if (hasAudio) {
       // Store the current online client before switching -- TODO use this for restoring in disableOfflineAudio?
-      const currentClient = this.ttsClient;
+      // const currentClient = this.ttsClient;
       this.ttsClient = this.ttsOfflineClient;
       await this.ttsClient.setRate(this.ttsRate);
       console.log('Switched to offline TTS - audio available for section');
