@@ -294,7 +294,7 @@ export class OfflineTTSClient implements TTSClient {
       }
 
       const result = await new Promise<TTSMessageEvent>((resolve) => {
-        const startPlayback = (offsetSeconds: number) => {
+        const startPlayback = async (offsetSeconds: number) => {
           if (!this.#audioBuffer) {
             resolve({ code: 'error', message: 'No audio buffer' });
             return;
@@ -311,6 +311,7 @@ export class OfflineTTSClient implements TTSClient {
           source.onended = () => {
             this.stopMarkInterval();
             this.#isPlaying = false;
+            console.log('[OfflineTTSClient] Playback ended');
             resolve({ code: 'end', message: 'Block audio finished' });
           };
 

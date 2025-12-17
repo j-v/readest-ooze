@@ -1,8 +1,11 @@
 next step
-- deploy as app
+- fix lock screen and media controls no longer working
+
+to test
+- is online audio still working
+- test offline->online fallback working
 
 issues with offline audio
-- lag in starting offline audio in airplane mode/no connection..
 - doesn't switch to offline if started in online TTS
 - can web app be run offline? (specifically in iOS)
 - progress completely broken?
@@ -11,6 +14,10 @@ issues with offline audio
 - error handling
  - no matching audio chunk
 - cancel doesn't work (at least not immediately)
+- doesn't seem to continue when locking screen
+- nested chapters might not make sense in TOC?
+
+
 
 offline audio improvements
 - custom voice

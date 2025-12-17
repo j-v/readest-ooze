@@ -327,35 +327,27 @@ const TTSControl: React.FC<TTSControlProps> = ({ bookKey, gridInsets }) => {
 
       setShowIndicator(true);
       const ttsController = new TTSController(appService, view);
-      await ttsController.init();
+      
+      // Get context for offline audio check
+      const bookId = bookKey.split('-')[0]!;
+      const voiceId = 'en-US-AriaNeural'; // TODO: Get from settings
+      const currentHref = progress?.sectionHref || '';
+      const initialLang = primaryLang || 'en';
+      
+      // Pass context to init() - it will check offline audio FIRST before initializing online clients
+      await ttsController.init(bookId, currentHref, voiceId, initialLang);
       await ttsController.initViewTTS(viewSettings.ttsHighlightOptions);
+
+      // After initViewTTS, view.tts is initialized; now fetch SSML
       const ssml = view.tts?.from(ttsFromRange);
+      const lang = ssml ? parseSSMLLang(ssml, primaryLang) || 'en' : initialLang;
+      
       if (ssml) {
-        const lang = parseSSMLLang(ssml, primaryLang) || 'en';
         setIsPlaying(true);
         setTtsLang(lang);
 
         ttsController.setLang(lang);
         ttsController.setRate(viewSettings.ttsRate);
-
-        // Check if offline audio is available for current section and try to use it
-        try {
-          const bookId = bookKey.split('-')[0]!;
-          const voiceId = 'en-US-AriaNeural'; // TODO: Get from settings
-          const currentHref = progress?.sectionHref || '';
-
-          if (currentHref && bookId) {
-            const usingOffline = await ttsController.tryUseOfflineAudio(bookId, currentHref, voiceId, lang);
-            if (usingOffline) {
-              console.log('Using offline TTS for section:', currentHref);
-            } else {
-              console.log('Using online TTS for section:', currentHref);
-            }
-          }
-        } catch (err) {
-          console.error('Error checking offline audio availability:', err);
-          // Continue with default TTS client on error
-        }
 
         ttsController.speak(ssml);
         ttsController.setTargetLang(getTTSTargetLang() || '');
