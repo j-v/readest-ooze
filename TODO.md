@@ -6,20 +6,22 @@ to test
 - test offline->online fallback working
 
 issues with offline audio
-- doesn't switch to offline if started in online TTS
+- sometimes highlights word by word instead of sentences
+- doesn't switch to offline if started in online TTS (maybe fixed?)
 - can web app be run offline? (specifically in iOS)
 - progress completely broken?
 - navigation (next/prev sentence) broken because of structure of SMLL chunks
   - next section works 
 - error handling
  - no matching audio chunk
-- cancel doesn't work (at least not immediately)
+- cancel download doesn't work (at least not immediately)
 - doesn't seem to continue when locking screen
 - nested chapters might not make sense in TOC?
-
-
+- trying to download TTS when offline doesn't fail 
+- changing playback speed results in "no matching audio chunk found for content" (same root cause as navigation broken probably)
 
 offline audio improvements
+- progress meter for download
 - custom voice
 - custom playback speed
 - better audio-text synchronization / highlight tracking
