@@ -30,6 +30,7 @@ export class OfflineTTSClient implements TTSClient {
   #isPlaying = false;
   #pausedAt = 0; // in seconds relative to buffer
   #playStartCtxTime = 0; // AudioContext.currentTime when started
+  #playbackRate = 1.0; // playback speed multiplier
   #markInterval: number | null = null;
   #currentMarkTimings: Array<{ name: string; offset: number; duration: number }> = [];
   #currentMarks: Array<{ name: string; text: string; offset: number; language: string }> = [];
@@ -59,13 +60,16 @@ export class OfflineTTSClient implements TTSClient {
     offsetMs: number,
   ) {
     let currentMarkIndex = 0;
-    while (currentMarkIndex < markTimings.length && markTimings[currentMarkIndex]!.offset <= offsetMs) {
+    // Adjust offset for playback rate when finding starting mark
+    const adjustedOffsetMs = offsetMs / this.#playbackRate;
+    while (currentMarkIndex < markTimings.length && markTimings[currentMarkIndex]!.offset <= adjustedOffsetMs) {
       currentMarkIndex++;
     }
 
     this.stopMarkInterval();
     this.#markInterval = window.setInterval(() => {
-      const elapsedMs = (audioContext.currentTime - this.#playStartCtxTime) * 1000;
+      // Calculate elapsed time accounting for playback rate
+      const elapsedMs = (audioContext.currentTime - this.#playStartCtxTime) * 1000 * this.#playbackRate;
       while (currentMarkIndex < markTimings.length) {
         const markTiming = markTimings[currentMarkIndex]!;
         const correspondingMark = marks[currentMarkIndex];
@@ -302,10 +306,11 @@ export class OfflineTTSClient implements TTSClient {
 
           const source = audioContext.createBufferSource();
           source.buffer = this.#audioBuffer;
+          source.playbackRate.value = this.#playbackRate; // Apply playback rate
           source.connect(audioContext.destination);
           this.#bufferSource = source;
           this.#isPlaying = true;
-          this.#playStartCtxTime = audioContext.currentTime - offsetSeconds;
+          this.#playStartCtxTime = audioContext.currentTime - offsetSeconds / this.#playbackRate;
           this.startMarkScheduler(markTimings, marks, audioContext, offsetSeconds * 1000);
 
           source.onended = () => {
@@ -433,9 +438,10 @@ export class OfflineTTSClient implements TTSClient {
     const audioContext = this.#audioContext;
     const source = audioContext.createBufferSource();
     source.buffer = this.#audioBuffer;
+    source.playbackRate.value = this.#playbackRate; // Apply playback rate
     source.connect(audioContext.destination);
     this.#bufferSource = source;
-    this.#playStartCtxTime = audioContext.currentTime - this.#pausedAt;
+    this.#playStartCtxTime = audioContext.currentTime - this.#pausedAt / this.#playbackRate;
     this.#isPlaying = true;
 
     if (this.#currentMarkTimings.length && this.#currentMarks.length) {
@@ -472,9 +478,19 @@ export class OfflineTTSClient implements TTSClient {
     this.stopBufferSource();
   }
 
-  async setRate(_rate: number): Promise<void> {
-    // Offline client doesn't support rate adjustment
-    console.warn('Rate adjustment not supported for offline audio');
+  async setRate(rate: number): Promise<void> {
+    // Store the new rate for future playback
+    this.#playbackRate = rate;
+    
+    // If currently playing, update the playback rate dynamically
+    if (this.#bufferSource && this.#isPlaying) {
+      try {
+        this.#bufferSource.playbackRate.value = rate;
+        console.log(`[OfflineTTSClient] Playback rate updated to ${rate}`);
+      } catch (err) {
+        console.error('[OfflineTTSClient] Failed to update playback rate:', err);
+      }
+    }
   }
 
   async setPitch(_pitch: number): Promise<void> {
