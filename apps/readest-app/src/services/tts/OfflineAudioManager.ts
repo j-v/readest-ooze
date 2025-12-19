@@ -1,6 +1,7 @@
 /**
  * OfflineAudioManager - Orchestrates downloading and managing offline TTS audio
  * Uses Foliate TTS for SSML generation to ensure parity with online TTS highlighting.
+ * Supports multiple TTS providers through the TTSProvider interface.
  */
 
 import { TOCItem, BookDoc } from '@/libs/document';
@@ -9,11 +10,11 @@ import {
   DownloadProgress,
   MarkTimingInfo,
 } from './OfflineAudioStorage';
-import { EdgeSpeechTTS } from '@/libs/edgeTTS';
 import { parseSSMLMarks, filterSSMLWithLang } from '@/utils/ssml';
-import { getAudioDuration, simpleHash } from './utils';
+import { simpleHash } from './utils';
 import { generateSSMLChunksForSection } from './FoliateTTSHelper';
 import { TTSGranularity } from './types';
+import { TTSProvider, EdgeTTSProvider } from './providers';
 
 export interface DownloadOptions {
   bookHash: string;
@@ -47,28 +48,37 @@ export interface DownloadStatus {
 }
 
 class OfflineAudioManager extends EventTarget {
-  private edgeTTS: EdgeSpeechTTS;
+  private ttsProvider: TTSProvider;
   private activeDownloads = new Map<string, AbortController>();
 
-  constructor() {
+  constructor(provider?: TTSProvider) {
     super();
-    this.edgeTTS = new EdgeSpeechTTS();
+    // Default to EdgeTTS provider if none specified
+    this.ttsProvider = provider || new EdgeTTSProvider();
   }
 
   async init(): Promise<void> {
     await offlineAudioStorage.init();
-    // // Test EdgeTTS to ensure it's working
-    // try {
-    //   await this.edgeTTS.create({
-    //     lang: 'en',
-    //     text: 'test',
-    //     voice: 'en-US-AriaNeural',
-    //     rate: 1.0,
-    //     pitch: 1.0,
-    //   });
-    // } catch (error) {
-    //   console.error('EdgeTTS initialization failed:', error);
-    // }
+    // Initialize the TTS provider
+    const initialized = await this.ttsProvider.init();
+    if (!initialized) {
+      console.error('[OfflineAudioManager] Failed to initialize TTS provider');
+    }
+  }
+
+  /**
+   * Set a new TTS provider
+   * Useful for switching between different TTS engines
+   */
+  setProvider(provider: TTSProvider): void {
+    this.ttsProvider = provider;
+  }
+
+  /**
+   * Get the current TTS provider
+   */
+  getProvider(): TTSProvider {
+    return this.ttsProvider;
   }
 
   /**
@@ -193,23 +203,17 @@ class OfflineAudioManager extends EventTarget {
       });
 
       try {
-        // Generate audio for the entire chunk's plain text
-        const response = await this.edgeTTS.create({
+        // Generate audio for the entire chunk's plain text using the TTS provider
+        const { audioBlob, duration: chunkDuration } = await this.ttsProvider.generateAudio({
           lang,
           text: plainText,
-          voice: voiceId,
+          voiceId,
           rate,
           pitch,
         });
 
-        const arrayBuffer = await response.arrayBuffer();
-        const audioBlob = new Blob([arrayBuffer], { type: 'audio/mpeg' });
-
         // Convert to base64 for IndexedDB storage (iOS compatibility)
         const base64Audio = await this.blobToBase64(audioBlob);
-
-        // Get audio duration
-        const chunkDuration = await getAudioDuration(audioBlob);
 
         // Create timing metadata for each mark in this chunk
         // Distribute duration proportionally across marks based on text length
