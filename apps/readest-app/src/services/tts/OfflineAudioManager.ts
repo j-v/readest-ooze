@@ -70,8 +70,19 @@ class OfflineAudioManager extends EventTarget {
    * Set a new TTS provider
    * Useful for switching between different TTS engines
    */
-  setProvider(provider: TTSProvider): void {
+  async setProvider(provider: TTSProvider): Promise<void> {
+    // Shutdown the old provider to clean up resources
+    if (this.ttsProvider) {
+      await this.ttsProvider.shutdown();
+    }
+    
     this.ttsProvider = provider;
+    
+    // Initialize the new provider
+    const initialized = await provider.init();
+    if (!initialized) {
+      console.error('[OfflineAudioManager] Failed to initialize new TTS provider');
+    }
   }
 
   /**

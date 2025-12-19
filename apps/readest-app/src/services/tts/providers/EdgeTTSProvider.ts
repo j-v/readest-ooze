@@ -20,14 +20,12 @@ export class EdgeTTSProvider implements TTSProvider {
     if (this.initialized) return true;
 
     try {
-      // Test EdgeTTS to ensure it's working
-      await this.edgeTTS.create({
-        lang: 'en',
-        text: 'test',
-        voice: 'en-US-AriaNeural',
-        rate: 1.0,
-        pitch: 1.0,
-      });
+      // EdgeSpeechTTS is ready to use immediately - no async initialization needed
+      // Just verify that we have access to voices
+      const voices = EdgeSpeechTTS.voices;
+      if (!voices || voices.length === 0) {
+        throw new Error('No voices available');
+      }
       this.initialized = true;
       return true;
     } catch (error) {

@@ -60,20 +60,22 @@ export class OfflineTTSClient implements TTSClient {
     offsetMs: number,
   ) {
     let currentMarkIndex = 0;
-    // Adjust offset for playback rate when finding starting mark
-    const adjustedOffsetMs = offsetMs / this.#playbackRate;
-    while (currentMarkIndex < markTimings.length && markTimings[currentMarkIndex]!.offset <= adjustedOffsetMs) {
+    // Find the starting mark index based on current offset
+    while (currentMarkIndex < markTimings.length && markTimings[currentMarkIndex]!.offset <= offsetMs) {
       currentMarkIndex++;
     }
 
     this.stopMarkInterval();
     this.#markInterval = window.setInterval(() => {
-      // Calculate elapsed time accounting for playback rate
-      const elapsedMs = (audioContext.currentTime - this.#playStartCtxTime) * 1000 * this.#playbackRate;
+      // Calculate elapsed time in audio time (not real time)
+      // At 2x speed, 1 second of real time = 2 seconds of audio time
+      const realTimeElapsed = audioContext.currentTime - this.#playStartCtxTime;
+      const audioTimeElapsed = realTimeElapsed * this.#playbackRate * 1000;
+      
       while (currentMarkIndex < markTimings.length) {
         const markTiming = markTimings[currentMarkIndex]!;
         const correspondingMark = marks[currentMarkIndex];
-        if (elapsedMs >= markTiming.offset) {
+        if (audioTimeElapsed >= markTiming.offset) {
           if (correspondingMark) {
             this.controller?.dispatchSpeakMark(correspondingMark);
           }
@@ -310,7 +312,9 @@ export class OfflineTTSClient implements TTSClient {
           source.connect(audioContext.destination);
           this.#bufferSource = source;
           this.#isPlaying = true;
-          this.#playStartCtxTime = audioContext.currentTime - offsetSeconds / this.#playbackRate;
+          // playStartCtxTime tracks when playback started in AudioContext time
+          // offsetSeconds is in audio buffer time, so we need to convert to real time
+          this.#playStartCtxTime = audioContext.currentTime - (offsetSeconds / this.#playbackRate);
           this.startMarkScheduler(markTimings, marks, audioContext, offsetSeconds * 1000);
 
           source.onended = () => {
@@ -441,7 +445,8 @@ export class OfflineTTSClient implements TTSClient {
     source.playbackRate.value = this.#playbackRate; // Apply playback rate
     source.connect(audioContext.destination);
     this.#bufferSource = source;
-    this.#playStartCtxTime = audioContext.currentTime - this.#pausedAt / this.#playbackRate;
+    // pausedAt is in buffer time (seconds), convert to real time for playStartCtxTime
+    this.#playStartCtxTime = audioContext.currentTime - (this.#pausedAt / this.#playbackRate);
     this.#isPlaying = true;
 
     if (this.#currentMarkTimings.length && this.#currentMarks.length) {
