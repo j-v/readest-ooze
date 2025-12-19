@@ -36,6 +36,10 @@ export class EdgeTTSProvider implements TTSProvider {
   }
 
   async generateAudio(options: TTSGenerationOptions): Promise<TTSAudioResult> {
+    if (!this.initialized) {
+      throw new Error('[EdgeTTSProvider] Provider not initialized. Call init() first.');
+    }
+
     const { lang, text, voiceId, rate, pitch } = options;
 
     try {
@@ -64,6 +68,10 @@ export class EdgeTTSProvider implements TTSProvider {
   }
 
   async getVoicesForLang(lang: string): Promise<string[]> {
+    if (!this.initialized) {
+      throw new Error('[EdgeTTSProvider] Provider not initialized. Call init() first.');
+    }
+
     const voices = EdgeSpeechTTS.voices;
     return voices.filter((v) => v.lang.startsWith(lang)).map((v) => v.id);
   }

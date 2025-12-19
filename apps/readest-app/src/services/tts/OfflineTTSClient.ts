@@ -429,8 +429,10 @@ export class OfflineTTSClient implements TTSClient {
   async pause(): Promise<boolean> {
     if (!this.#isPlaying) return true;
     if (!this.#audioContext || !this.#bufferSource) return true;
-    const elapsed = this.#audioContext.currentTime - this.#playStartCtxTime;
-    this.#pausedAt = Math.max(elapsed, 0);
+    // Calculate elapsed time in real time, then convert to buffer time
+    const realTimeElapsed = this.#audioContext.currentTime - this.#playStartCtxTime;
+    // At 2x speed, 1 second of real time = 2 seconds of buffer time
+    this.#pausedAt = Math.max(realTimeElapsed * this.#playbackRate, 0);
     this.stopBufferSource();
     this.#isPlaying = false;
     return true;
