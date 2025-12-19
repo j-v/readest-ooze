@@ -370,7 +370,7 @@ export class OfflineTTSClient implements TTSClient {
       const normalizedPlainText = plainText.trim().toLowerCase();
       for (const record of sectionAudio) {
         const recordText = this.normalizeWhitespace(record.text).trim().toLowerCase();
-        if (recordText === normalizedPlainText) {
+        if (recordText === normalizedPlainText || recordText.includes(normalizedPlainText)) {
           return record;
         }
       }
@@ -515,7 +515,7 @@ export class OfflineTTSClient implements TTSClient {
   }
 
   getGranularities(): TTSGranularity[] {
-    return ['word', 'sentence'];
+    return ['sentence'];
   }
 
   getVoiceId(): string {
