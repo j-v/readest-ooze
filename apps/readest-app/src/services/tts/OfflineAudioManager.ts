@@ -9,7 +9,8 @@ import {
   DownloadProgress,
   MarkTimingInfo,
 } from './OfflineAudioStorage';
-import { EdgeSpeechTTS } from '@/libs/edgeTTS';
+import TTSProvider from './providers/TTSProvider';
+import EdgeTTSProvider from './providers/EdgeTTSProvider';
 import { parseSSMLMarks, filterSSMLWithLang } from '@/utils/ssml';
 import { getAudioDuration, simpleHash } from './utils';
 import { generateSSMLChunksForSection } from './FoliateTTSHelper';
@@ -47,16 +48,22 @@ export interface DownloadStatus {
 }
 
 class OfflineAudioManager extends EventTarget {
-  private edgeTTS: EdgeSpeechTTS;
+  private provider: TTSProvider;
   private activeDownloads = new Map<string, AbortController>();
 
-  constructor() {
+  constructor(provider?: TTSProvider) {
     super();
-    this.edgeTTS = new EdgeSpeechTTS();
+    // allow injection for testing or alternate providers
+    this.provider = provider || new EdgeTTSProvider();
+  }
+
+  setProvider(provider: TTSProvider) {
+    this.provider = provider;
   }
 
   async init(): Promise<void> {
     await offlineAudioStorage.init();
+    if (this.provider?.init) await this.provider.init();
     // // Test EdgeTTS to ensure it's working
     // try {
     //   await this.edgeTTS.create({
@@ -193,16 +200,17 @@ class OfflineAudioManager extends EventTarget {
       });
 
       try {
-        // Generate audio for the entire chunk's plain text
-        const response = await this.edgeTTS.create({
+        // Generate audio for the entire chunk's plain text via provider
+        const bufferOrBlob = await this.provider.synthesize(plainText, {
           lang,
-          text: plainText,
           voice: voiceId,
           rate,
           pitch,
+          granularity,
+          targetLang,
         });
 
-        const arrayBuffer = await response.arrayBuffer();
+        const arrayBuffer = bufferOrBlob instanceof Blob ? await bufferOrBlob.arrayBuffer() : bufferOrBlob;
         const audioBlob = new Blob([arrayBuffer], { type: 'audio/mpeg' });
 
         // Convert to base64 for IndexedDB storage (iOS compatibility)
