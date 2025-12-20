@@ -72,7 +72,10 @@ export class OfflineTTSClient implements TTSClient {
     offsetMs: number,
   ) {
     let currentMarkIndex = 0;
-    while (currentMarkIndex < markTimings.length && markTimings[currentMarkIndex]!.offset <= offsetMs) {
+    while (
+      currentMarkIndex < markTimings.length &&
+      markTimings[currentMarkIndex]!.offset <= offsetMs
+    ) {
       currentMarkIndex++;
     }
 
@@ -139,12 +142,27 @@ export class OfflineTTSClient implements TTSClient {
    * Returns: Promise<boolean> - true if offline audio chunks exist for this section
    */
   async hasOfflineAudio(): Promise<boolean> {
-    if (!this.#bookHash || !this.#sectionHref || !this.#voiceId) {
+    if (!this.#bookHash || !this.#sectionHref) {
       console.warn('[OfflineTTSClient] hasOfflineAudio called without context set');
       return false;
     }
 
     try {
+      // Check if there is a specific voice downloaded for this book
+      const downloadedVoiceId = await offlineAudioStorage.getDownloadedVoice(this.#bookHash);
+
+      // If we found a specific voice downloaded for this book, use it instead of the requested one
+      if (downloadedVoiceId && downloadedVoiceId !== this.#voiceId) {
+        console.log(
+          `[OfflineTTSClient] Using downloaded voice ${downloadedVoiceId} instead of requested ${this.#voiceId}`,
+        );
+        this.#voiceId = downloadedVoiceId;
+      }
+
+      if (!this.#voiceId) {
+        return false;
+      }
+
       const allAudio = await offlineAudioStorage.getBookAudio(this.#bookHash);
       const sectionAudio = allAudio.filter(
         (record) => record.href.startsWith(this.#sectionHref) && record.voiceId === this.#voiceId,
@@ -171,9 +189,7 @@ export class OfflineTTSClient implements TTSClient {
    * Collapses multiple spaces and normalizes line endings.
    */
   private normalizeWhitespace(text: string): string {
-    return text
-      .replace(/\s+/g, ' ')
-      .trim();
+    return text.replace(/\s+/g, ' ').trim();
   }
 
   /**
@@ -263,7 +279,7 @@ export class OfflineTTSClient implements TTSClient {
 
         const ensureMarkScheduler = (offsetMs: number) => {
           const durationMs =
-            (typeof audioChunk.durationMs === 'number' && audioChunk.durationMs > 0)
+            typeof audioChunk.durationMs === 'number' && audioChunk.durationMs > 0
               ? audioChunk.durationMs
               : Number.isFinite(audio.duration) && audio.duration > 0
                 ? audio.duration * 1000
@@ -319,13 +335,11 @@ export class OfflineTTSClient implements TTSClient {
         }
 
         this.#isPlaying = true;
-        audio
-          .play()
-          .catch((err: Error) => {
-            cleanup();
-            this.#isPlaying = false;
-            resolve({ code: 'error', message: 'Playback failed: ' + err.message });
-          });
+        audio.play().catch((err: Error) => {
+          cleanup();
+          this.#isPlaying = false;
+          resolve({ code: 'error', message: 'Playback failed: ' + err.message });
+        });
       });
 
       yield result;
@@ -353,8 +367,7 @@ export class OfflineTTSClient implements TTSClient {
 
       // Filter for this section and voice
       const sectionAudio = allAudio.filter(
-        (record) =>
-          record.href.startsWith(this.#sectionHref) && record.voiceId === this.#voiceId,
+        (record) => record.href.startsWith(this.#sectionHref) && record.voiceId === this.#voiceId,
       );
 
       // First try to match by content hash

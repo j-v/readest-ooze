@@ -6,6 +6,7 @@ import { TTSGranularity, TTSMark, TTSVoice, TTSVoicesGroup } from './types';
 import { HttpTTSProvider } from './providers/HttpTTSProvider';
 import { md5 } from 'js-md5';
 import { LRUCache } from '@/utils/lru';
+import { KOKORO_VOICES } from './data/kokoroVoices';
 
 export interface TTSPayload {
   lang: string;
@@ -33,7 +34,7 @@ export class HttpTTSClient implements TTSClient {
   #speakingLang = '';
   #currentVoiceId = 'af_alloy';
   #rate = 1.0;
-    
+
   #provider: HttpTTSProvider;
   #audioElement: HTMLAudioElement | null = null;
   #isPlaying = false;
@@ -52,43 +53,14 @@ export class HttpTTSClient implements TTSClient {
     });
 
     // Kokoro voices
-    this.#voices = [
-      {"id": "af_alloy", "name": "Alloy", "lang": "en"},
-      {"id": "af_aoede", "name": "Aoede", "lang": "en"},
-      {"id": "af_bella", "name": "Bella", "lang": "en"},
-      {"id": "af_heart", "name": "Heart", "lang": "en"},
-      {"id": "af_jessica", "name": "Jessica", "lang": "en"},
-      {"id": "af_kore", "name": "Kore", "lang": "en"},
-      {"id": "af_nicole", "name": "Nicole", "lang": "en"},
-      {"id": "af_nova", "name": "Nova", "lang": "en"},
-      {"id": "af_river", "name": "River", "lang": "en"},
-      {"id": "af_sarah", "name": "Sarah", "lang": "en"},
-      {"id": "af_sky", "name": "Sky", "lang": "en"},
-      {"id": "am_adam", "name": "Adam", "lang": "en"},
-      {"id": "am_echo", "name": "Echo", "lang": "en"},
-      {"id": "am_eric", "name": "Eric", "lang": "en"},
-      {"id": "am_fenrir", "name": "Fenrir", "lang": "en"},
-      {"id": "am_liam", "name": "Liam", "lang": "en"},
-      {"id": "am_michael", "name": "Michael", "lang": "en"},
-      {"id": "am_onyx", "name": "Onyx", "lang": "en"},
-      {"id": "am_puck", "name": "Puck", "lang": "en"},
-      {"id": "am_santa", "name": "Santa", "lang": "en"},
-      {"id": "bf_alice", "name": "Alice", "lang": "en"},
-      {"id": "bf_emma", "name": "Emma", "lang": "en"},
-      {"id": "bf_isabella", "name": "Isabella", "lang": "en"},
-      {"id": "bf_lily", "name": "Lily", "lang": "en"},
-      {"id": "bm_daniel", "name": "Daniel", "lang": "en"},
-      {"id": "bm_fable", "name": "Fable", "lang": "en"},
-      {"id": "bm_george", "name": "George", "lang": "en"},
-      {"id": "bm_lewis", "name": "Lewis", "lang": "en"}
-    ]
+    this.#voices = KOKORO_VOICES;
     this.#currentVoiceId = 'af_alloy';
   }
 
   async init(): Promise<boolean> {
     try {
       await this.#provider.init();
-      
+
       // Test synthesis to ensure provider is available
       await this.#provider.synthesize('test', {
         lang: 'en',
@@ -127,28 +99,33 @@ export class HttpTTSClient implements TTSClient {
   async *speak(ssml: string, signal: AbortSignal, preload = false): AsyncIterable<TTSMessageEvent> {
     const { marks } = parseSSMLMarks(ssml, this.#primaryLang);
 
-    const preloadMark = async (mark: TTSMark)  => {
-        const { language: voiceLang } = mark;
-        const voiceId = await this.getVoiceIdFromLang(voiceLang);
-        this.#currentVoiceId = voiceId;
-        const key= hashPayload({text: mark.text, lang: voiceLang, voice: voiceId, rate: this.#rate});
-        if (!HttpTTSClient.audioUrlCache.has(key)) {
-            try {
-            // console.log(`preloading: ${mark.text}`);
+    const preloadMark = async (mark: TTSMark) => {
+      const { language: voiceLang } = mark;
+      const voiceId = await this.getVoiceIdFromLang(voiceLang);
+      this.#currentVoiceId = voiceId;
+      const key = hashPayload({
+        text: mark.text,
+        lang: voiceLang,
+        voice: voiceId,
+        rate: this.#rate,
+      });
+      if (!HttpTTSClient.audioUrlCache.has(key)) {
+        try {
+          // console.log(`preloading: ${mark.text}`);
 
-            const buf = await this.#provider.synthesize(mark.text, {
-              lang: voiceLang,
-              voice: voiceId,
-              rate: this.#rate,
-            });
-            const audioBlob = new Blob([buf], { type: 'audio/mpeg' });
-            const audioUrl = URL.createObjectURL(audioBlob);
-            HttpTTSClient.audioUrlCache.set(key,audioUrl);
-            } catch (err) {
-              console.warn('Error preloading mark', mark, err);
-            }
+          const buf = await this.#provider.synthesize(mark.text, {
+            lang: voiceLang,
+            voice: voiceId,
+            rate: this.#rate,
+          });
+          const audioBlob = new Blob([buf], { type: 'audio/mpeg' });
+          const audioUrl = URL.createObjectURL(audioBlob);
+          HttpTTSClient.audioUrlCache.set(key, audioUrl);
+        } catch (err) {
+          console.warn('Error preloading mark', mark, err);
         }
-    }
+      }
+    };
 
     if (preload) {
       // Preload the first 2 marks immediately and the rest in the background
@@ -194,14 +171,19 @@ export class HttpTTSClient implements TTSClient {
         this.#speakingLang = voiceLang;
 
         // Synthesize audio via HTTP provider (use preload cache if available)
-        const key = hashPayload({text: mark.text, lang: voiceLang, voice: voiceId, rate: this.#rate});
+        const key = hashPayload({
+          text: mark.text,
+          lang: voiceLang,
+          voice: voiceId,
+          rate: this.#rate,
+        });
         let audioUrl = HttpTTSClient.audioUrlCache.get(key);
         if (!audioUrl) {
-            // console.log(`loading ${mark.text}`);
-            const audioBuffer = (await this.#provider.synthesize(mark.text, {
-              lang: voiceLang,
-              voice: voiceId,
-              rate: this.#rate,
+          // console.log(`loading ${mark.text}`);
+          const audioBuffer = (await this.#provider.synthesize(mark.text, {
+            lang: voiceLang,
+            voice: voiceId,
+            rate: this.#rate,
           })) as ArrayBuffer;
           const audioBlob = new Blob([audioBuffer], { type: 'audio/mpeg' });
           audioUrl = URL.createObjectURL(audioBlob);
@@ -328,10 +310,8 @@ export class HttpTTSClient implements TTSClient {
 
   async getVoices(lang: string): Promise<TTSVoicesGroup[]> {
     const voices = await this.getAllVoices();
-    // Filter voices by language 
-    const filteredVoices = voices.filter(
-      (v) => v.lang === lang || v.lang === lang.split('-')[0],
-    );
+    // Filter voices by language
+    const filteredVoices = voices.filter((v) => v.lang === lang || v.lang === lang.split('-')[0]);
 
     return [
       {

@@ -13,6 +13,7 @@ import { getContentMd5 } from '@/utils/misc';
 import { useTextTranslation } from '../../hooks/useTextTranslation';
 import { FlatTOCItem, StaticListRow, VirtualListRow } from './TOCItem';
 import { offlineAudioManager } from '@/services/tts/OfflineAudioManager';
+import { TTSUtils } from '@/services/tts/TTSUtils';
 
 const getItemIdentifier = (item: TOCItem) => {
   const href = item.href || '';
@@ -163,7 +164,11 @@ const TOCView: React.FC<{
     const loadDownloadedHrefs = async () => {
       try {
         await offlineAudioManager.init();
-        const voiceId = 'en-US-AriaNeural'; // TODO: Get from settings
+        let voiceId = await offlineAudioManager.getDownloadedVoice(bookId);
+        if (!voiceId) {
+          // Fallback to book preference or default if no downloads exist yet
+          voiceId = TTSUtils.getBookPreferredVoice(bookId) || 'en-US-AriaNeural';
+        }
         const status = await offlineAudioManager.getStatus(bookId, voiceId);
         setDownloadedHrefs(status.downloadedHrefs);
       } catch (err) {
@@ -234,9 +239,9 @@ const TOCView: React.FC<{
   const handleDownloadSection = useCallback(
     async (item: TOCItem) => {
       if (!item.href) return;
-      
+
       setDownloadingHrefs((prev) => new Set([...prev, item.href!]));
-      
+
       try {
         await offlineAudioManager.init();
         const view = getView(bookKey);
@@ -244,7 +249,43 @@ const TOCView: React.FC<{
           console.error('Book not found');
           return;
         }
-        const voiceId = 'en-US-AriaNeural'; // TODO: Get from settings
+
+        // Determine voice ID logic:
+        // 1. Existing download for this book?
+        let voiceId = await offlineAudioManager.getDownloadedVoice(bookId);
+
+        // 2. Book-specific preference?
+        if (!voiceId) {
+          voiceId = TTSUtils.getBookPreferredVoice(bookId);
+        }
+
+        // 3. Active Online Voice? (Check view settings)
+        if (!voiceId) {
+          const viewSettings = getViewSettings(bookKey);
+          if (viewSettings?.ttsVoice) {
+            voiceId = viewSettings.ttsVoice;
+          }
+        }
+
+        // 4. Global preference?
+        if (!voiceId) {
+          const langVal = view.book.metadata?.language;
+          const primaryLang = typeof langVal === 'string' ? langVal : 'en';
+
+          const preferredClient = TTSUtils.getPreferredClient();
+          if (preferredClient) {
+            const globalVoice = TTSUtils.getPreferredVoice(preferredClient, primaryLang);
+            if (globalVoice) {
+              voiceId = globalVoice;
+            }
+          }
+        }
+
+        // 5. Fallback
+        if (!voiceId) {
+          voiceId = 'en-US-AriaNeural';
+        }
+
         await offlineAudioManager.downloadSingleSection({
           bookHash: bookId,
           bookDoc: view.book,
@@ -319,36 +360,33 @@ const TOCView: React.FC<{
     return window.innerWidth >= 640 && !viewSettings?.translationEnabled ? 37 : 57;
   }, [viewSettings?.translationEnabled]);
 
-  const virtualListData = useMemo(
-    () => {
-      const data = {
-        flatItems,
-        itemSize: virtualItemSize,
-        bookKey,
-        activeHref,
-        downloadedHrefs,
-        downloadingHrefs,
-        onToggleExpand: handleToggleExpand,
-        onItemClick: handleItemClick,
-        onDownloadSection: handleDownloadSection,
-        onDeleteSection: handleDeleteSection,
-      };
-
-      return data;
-    },
-    [
+  const virtualListData = useMemo(() => {
+    const data = {
       flatItems,
-      virtualItemSize,
+      itemSize: virtualItemSize,
       bookKey,
       activeHref,
       downloadedHrefs,
       downloadingHrefs,
-      handleToggleExpand,
-      handleItemClick,
-      handleDownloadSection,
-      handleDeleteSection,
-    ],
-  );
+      onToggleExpand: handleToggleExpand,
+      onItemClick: handleItemClick,
+      onDownloadSection: handleDownloadSection,
+      onDeleteSection: handleDeleteSection,
+    };
+
+    return data;
+  }, [
+    flatItems,
+    virtualItemSize,
+    bookKey,
+    activeHref,
+    downloadedHrefs,
+    downloadingHrefs,
+    handleToggleExpand,
+    handleItemClick,
+    handleDownloadSection,
+    handleDeleteSection,
+  ]);
 
   useEffect(() => {
     if (!progress) return;
@@ -415,4 +453,3 @@ const TOCView: React.FC<{
   );
 };
 export default TOCView;
-

@@ -4,17 +4,17 @@
  */
 
 import { TOCItem, BookDoc } from '@/libs/document';
-import {
-  offlineAudioStorage,
-  DownloadProgress,
-  MarkTimingInfo,
-} from './OfflineAudioStorage';
+import { offlineAudioStorage, DownloadProgress, MarkTimingInfo } from './OfflineAudioStorage';
 import TTSProvider from './providers/TTSProvider';
 import EdgeTTSProvider from './providers/EdgeTTSProvider';
+import HttpTTSProvider from './providers/HttpTTSProvider';
+import { EdgeSpeechTTS } from '@/libs/edgeTTS';
+import { KOKORO_VOICES } from './data/kokoroVoices';
+import { TTSUtils } from './TTSUtils';
 import { parseSSMLMarks, filterSSMLWithLang } from '@/utils/ssml';
 import { getAudioDuration, simpleHash } from './utils';
 import { generateSSMLChunksForSection } from './FoliateTTSHelper';
-import { TTSGranularity } from './types';
+import { TTSGranularity, TTSVoicesGroup } from './types';
 
 export interface DownloadOptions {
   bookHash: string;
@@ -48,34 +48,32 @@ export interface DownloadStatus {
 }
 
 class OfflineAudioManager extends EventTarget {
-  private provider: TTSProvider;
+  private provider: TTSProvider; // Default/current provider
+  private edgeProvider: EdgeTTSProvider;
+  private httpProvider: HttpTTSProvider;
   private activeDownloads = new Map<string, AbortController>();
 
-  constructor(provider?: TTSProvider) {
+  constructor() {
     super();
-    // allow injection for testing or alternate providers
-    this.provider = provider || new EdgeTTSProvider();
+    this.edgeProvider = new EdgeTTSProvider();
+    this.httpProvider = new HttpTTSProvider({
+      // Same config as HttpTTSClient
+      endpoint: 'http://100.71.209.91:8000/tts',
+      timeoutMs: 30000,
+    });
+    this.provider = this.edgeProvider;
   }
 
+  // Deprecated: setProvider is less useful now that we manage multiple internally,
+  // but kept for compatibility/testing if needed to force a specific override
   setProvider(provider: TTSProvider) {
     this.provider = provider;
   }
 
   async init(): Promise<void> {
     await offlineAudioStorage.init();
-    if (this.provider?.init) await this.provider.init();
-    // // Test EdgeTTS to ensure it's working
-    // try {
-    //   await this.edgeTTS.create({
-    //     lang: 'en',
-    //     text: 'test',
-    //     voice: 'en-US-AriaNeural',
-    //     rate: 1.0,
-    //     pitch: 1.0,
-    //   });
-    // } catch (error) {
-    //   console.error('EdgeTTS initialization failed:', error);
-    // }
+    if (this.edgeProvider.init) await this.edgeProvider.init();
+    if (this.httpProvider.init) await this.httpProvider.init();
   }
 
   /**
@@ -123,7 +121,7 @@ class OfflineAudioManager extends EventTarget {
         const result = reader.result;
         if (typeof result === 'string') {
           // Remove the data:audio/mpeg;base64, prefix if present
-          const base64 = result.includes(',') ? (result.split(',')[1] || result) : result;
+          const base64 = result.includes(',') ? result.split(',')[1] || result : result;
           resolve(base64);
         } else {
           reject(new Error('FileReader did not return string'));
@@ -200,8 +198,17 @@ class OfflineAudioManager extends EventTarget {
       });
 
       try {
+        // Select appropriate provider based on voice ID
+        let currentProvider = this.provider;
+        const isKokoro = KOKORO_VOICES.some((v) => v.id === voiceId);
+        if (isKokoro) {
+          currentProvider = this.httpProvider;
+        } else {
+          currentProvider = this.edgeProvider;
+        }
+
         // Generate audio for the entire chunk's plain text via provider
-        const bufferOrBlob = await this.provider.synthesize(plainText, {
+        const bufferOrBlob = await currentProvider.synthesize(plainText, {
           lang,
           voice: voiceId,
           rate,
@@ -210,7 +217,8 @@ class OfflineAudioManager extends EventTarget {
           targetLang,
         });
 
-        const arrayBuffer = bufferOrBlob instanceof Blob ? await bufferOrBlob.arrayBuffer() : bufferOrBlob;
+        const arrayBuffer =
+          bufferOrBlob instanceof Blob ? await bufferOrBlob.arrayBuffer() : bufferOrBlob;
         const audioBlob = new Blob([arrayBuffer], { type: 'audio/mpeg' });
 
         // Convert to base64 for IndexedDB storage (iOS compatibility)
@@ -280,12 +288,7 @@ class OfflineAudioManager extends EventTarget {
     });
 
     // Mark section as complete
-    await offlineAudioStorage.markSectionComplete(
-      bookHash,
-      href,
-      voiceId,
-      ssmlChunks.length,
-    );
+    await offlineAudioStorage.markSectionComplete(bookHash, href, voiceId, ssmlChunks.length);
   }
 
   /**
@@ -372,17 +375,8 @@ class OfflineAudioManager extends EventTarget {
    * Download audio for entire book
    */
   async downloadBook(options: DownloadOptions): Promise<void> {
-    const {
-      bookHash,
-      bookDoc,
-      voiceId,
-      rate,
-      pitch,
-      primaryLang,
-      targetLang,
-      onProgress,
-      signal,
-    } = options;
+    const { bookHash, bookDoc, voiceId, rate, pitch, primaryLang, targetLang, onProgress, signal } =
+      options;
 
     // Create abort controller
     const abortController = new AbortController();
@@ -439,11 +433,7 @@ class OfflineAudioManager extends EventTarget {
           const granularity: TTSGranularity = 'sentence'; // Use sentence granularity for offline audio
 
           // Use Foliate TTS to generate SSML chunks for exact parity with online TTS
-          const ssmlChunks = await generateSSMLChunksForSection(
-            bookDoc,
-            href,
-            granularity,
-          );
+          const ssmlChunks = await generateSSMLChunksForSection(bookDoc, href, granularity);
 
           if (ssmlChunks.length > 0) {
             await this.downloadSectionWithFoliateTTS(
@@ -605,6 +595,51 @@ class OfflineAudioManager extends EventTarget {
   async getAudio(bookHash: string, href: string, voiceId: string): Promise<string | null> {
     const record = await offlineAudioStorage.getAudio(bookHash, href, voiceId);
     return record?.audioData || null;
+  }
+
+  /**
+   * Get available voices for offline download
+   */
+  async getVoices(lang: string): Promise<TTSVoicesGroup[]> {
+    // 1. Edge TTS Voices
+    const edgeVoices = EdgeSpeechTTS.voices;
+    const filteredEdgeVoices = edgeVoices.filter(
+      (v) => v.lang.startsWith(lang) || (lang === 'en' && ['en-US', 'en-GB'].includes(v.lang)),
+    );
+    filteredEdgeVoices.sort(TTSUtils.sortVoicesFunc);
+
+    // 2. Kokoro (Http) Voices
+    // Simple filter: match lang exactly or 'en'
+    const filteredKokoroVoices = KOKORO_VOICES.filter(
+      (v) => v.lang === lang || (lang === 'en' && v.lang === 'en'),
+    );
+
+    const groups: TTSVoicesGroup[] = [];
+
+    if (filteredKokoroVoices.length > 0) {
+      groups.push({
+        id: 'http-tts',
+        name: 'Kokoro TTS', // Or "High Quality" / "Experimental"
+        voices: filteredKokoroVoices,
+      });
+    }
+
+    if (filteredEdgeVoices.length > 0) {
+      groups.push({
+        id: 'edge-tts',
+        name: 'Edge TTS',
+        voices: filteredEdgeVoices,
+      });
+    }
+
+    return groups;
+  }
+
+  /**
+   * Get the voice ID used for a downloaded book
+   */
+  async getDownloadedVoice(bookHash: string): Promise<string | null> {
+    return offlineAudioStorage.getDownloadedVoice(bookHash);
   }
 }
 

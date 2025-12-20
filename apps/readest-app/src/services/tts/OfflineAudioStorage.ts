@@ -108,7 +108,9 @@ class OfflineAudioStorage {
         if (!db.objectStoreNames.contains(COMPLETION_STORE)) {
           const completionStore = db.createObjectStore(COMPLETION_STORE, { keyPath: 'id' });
           completionStore.createIndex('bookHash', 'bookHash', { unique: false });
-          completionStore.createIndex('bookHash_voiceId', ['bookHash', 'voiceId'], { unique: false });
+          completionStore.createIndex('bookHash_voiceId', ['bookHash', 'voiceId'], {
+            unique: false,
+          });
         }
 
         // Mark metadata store (for timing synchronization)
@@ -149,7 +151,11 @@ class OfflineAudioStorage {
     });
   }
 
-  async getAudio(bookHash: string, href: string, voiceId: string): Promise<OfflineAudioRecord | null> {
+  async getAudio(
+    bookHash: string,
+    href: string,
+    voiceId: string,
+  ): Promise<OfflineAudioRecord | null> {
     if (!this.db) await this.init();
 
     const id = this.generateId(bookHash, href, voiceId);
@@ -178,7 +184,7 @@ class OfflineAudioStorage {
         console.log('[OfflineAudioStorage] Retrieved audio records:', {
           bookHash,
           recordCount: records.length,
-          records: records.map(r => ({
+          records: records.map((r) => ({
             id: r.id,
             href: r.href,
             voiceId: r.voiceId,
@@ -243,9 +249,7 @@ class OfflineAudioStorage {
 
   async getDownloadedHrefs(bookHash: string, voiceId: string): Promise<Set<string>> {
     const records = await this.getBookAudio(bookHash);
-    const hrefs = records
-      .filter((r) => r.voiceId === voiceId)
-      .map((r) => r.href);
+    const hrefs = records.filter((r) => r.voiceId === voiceId).map((r) => r.href);
     return new Set(hrefs);
   }
 
@@ -371,10 +375,27 @@ class OfflineAudioStorage {
 
       request.onsuccess = () => {
         const completions = request.result as SectionCompletion[];
-        const hrefs = new Set(
-          completions.filter((c) => c.isComplete).map((c) => c.href),
-        );
+        const hrefs = new Set(completions.filter((c) => c.isComplete).map((c) => c.href));
         resolve(hrefs);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async getDownloadedVoice(bookHash: string): Promise<string | null> {
+    if (!this.db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([COMPLETION_STORE], 'readonly');
+      const store = transaction.objectStore(COMPLETION_STORE);
+      const index = store.index('bookHash');
+      const request = index.getAll(bookHash);
+
+      request.onsuccess = () => {
+        const completions = request.result as SectionCompletion[];
+        // Find any completed section to determine the voice ID
+        const completed = completions.find((c) => c.isComplete);
+        resolve(completed ? completed.voiceId : null);
       };
       request.onerror = () => reject(request.error);
     });
