@@ -88,6 +88,14 @@ export class HttpTTSClient implements TTSClient {
   async init(): Promise<boolean> {
     try {
       await this.#provider.init();
+      
+      // Test synthesis to ensure provider is available
+      await this.#provider.synthesize('test', {
+        lang: 'en',
+        voice: this.#currentVoiceId,
+        rate: 1.0,
+      });
+
       this.initialized = true;
     } catch (error) {
       console.error('Failed to initialize HTTP TTS provider:', error);
