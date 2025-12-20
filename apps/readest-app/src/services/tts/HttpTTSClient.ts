@@ -189,7 +189,7 @@ export class HttpTTSClient implements TTSClient {
         const key = hashPayload({text: mark.text, lang: voiceLang, voice: voiceId, rate: this.#rate});
         let audioUrl = HttpTTSClient.audioUrlCache.get(key);
         if (!audioUrl) {
-            console.log(`loading ${mark.text}`);
+            // console.log(`loading ${mark.text}`);
             const audioBuffer = (await this.#provider.synthesize(mark.text, {
               lang: voiceLang,
               voice: voiceId,
@@ -271,10 +271,13 @@ export class HttpTTSClient implements TTSClient {
   async resume(): Promise<boolean> {
     if (!this.#audioElement) return false;
     try {
-      await this.#audioElement.play();
+      await this.#audioElement.play().catch((err) => {
+        console.error('Failed to resume audio:', err);
+      });
       this.#isPlaying = true;
       return true;
     } catch (err) {
+      // TODO superfluous catch?
       console.error('Failed to resume audio:', err);
       return false;
     }
@@ -289,7 +292,6 @@ export class HttpTTSClient implements TTSClient {
       this.#audioElement.pause();
       this.#audioElement.currentTime = 0;
       this.#audioElement.src = '';
-      this.#isPlaying = false;
     }
   }
 
