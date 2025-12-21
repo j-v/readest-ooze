@@ -81,18 +81,12 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
       if (!selectedVoiceId && !downloadedVoiceId) {
         let defaultVoice = '';
 
-        // 1. Check for book-specific preference
-        const bookPrefVoice = TTSUtils.getBookPreferredVoice(bookId);
-        if (bookPrefVoice) {
-          defaultVoice = bookPrefVoice;
-        }
-
-        // 2. Check for active online voice (viewSettings)
-        if (!defaultVoice && viewSettings?.ttsVoice) {
+        // 1. Check for active online voice (viewSettings)
+        if (viewSettings?.ttsVoice) {
           defaultVoice = viewSettings.ttsVoice;
         }
 
-        // 3. Check for global preference
+        // 2. Check for global preference
         if (!defaultVoice) {
           const preferredClient = TTSUtils.getPreferredClient();
           if (preferredClient) {
@@ -291,7 +285,6 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
                       if (document.activeElement instanceof HTMLElement)
                         document.activeElement.blur();
                       setSelectedVoiceId(voice.id);
-                      TTSUtils.setBookPreferredVoice(bookId, voice.id);
                     }}
                   >
                     <span>{voice.name}</span>

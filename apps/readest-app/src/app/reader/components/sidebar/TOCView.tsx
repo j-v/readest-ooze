@@ -13,7 +13,7 @@ import { getContentMd5 } from '@/utils/misc';
 import { useTextTranslation } from '../../hooks/useTextTranslation';
 import { FlatTOCItem, StaticListRow, VirtualListRow } from './TOCItem';
 import { offlineAudioManager } from '@/services/tts/OfflineAudioManager';
-import { TTSUtils } from '@/services/tts/TTSUtils';
+import OfflineAudioSectionDialog from './OfflineAudioSectionDialog';
 
 const getItemIdentifier = (item: TOCItem) => {
   const href = item.href || '';
@@ -55,7 +55,7 @@ const TOCView: React.FC<{
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [containerHeight, setContainerHeight] = useState(400);
   const [downloadedHrefs, setDownloadedHrefs] = useState<Set<string>>(new Set());
-  const [downloadingHrefs, setDownloadingHrefs] = useState<Set<string>>(new Set());
+  const [offlineDialogItem, setOfflineDialogItem] = useState<TOCItem | null>(null);
 
   const hasInteractedWithTOCRef = useRef(false);
   const lastInteractionTimeRef = useRef<number>(0);
@@ -160,17 +160,38 @@ const TOCView: React.FC<{
       }
     }
 
-    // Load downloaded hrefs
+    // Load downloaded hrefs - check per-section if any voice is downloaded
     const loadDownloadedHrefs = async () => {
       try {
         await offlineAudioManager.init();
-        let voiceId = await offlineAudioManager.getDownloadedVoice(bookId);
-        if (!voiceId) {
-          // Fallback to book preference or default if no downloads exist yet
-          voiceId = TTSUtils.getBookPreferredVoice(bookId) || 'en-US-AriaNeural';
+        // Get all sections from main TOC and check each
+        const allHrefs = new Set<string>();
+
+        // Helper to collect all hrefs from TOC
+        const collectHrefs = (items: TOCItem[]) => {
+          for (const item of items) {
+            if (item.href) {
+              allHrefs.add(item.href);
+            }
+            if (item.subitems) {
+              collectHrefs(item.subitems);
+            }
+          }
+        };
+        collectHrefs(toc);
+
+        // Check each href for downloaded audio
+        const downloadedSet = new Set<string>();
+        // console.log('[TOCView] Checking hrefs for downloads:', Array.from(allHrefs).slice(0, 5));
+        for (const href of allHrefs) {
+          const voiceId = await offlineAudioManager.getDownloadedVoiceForSection(bookId, href);
+          // console.log('[TOCView] Checking href:', href, '-> voiceId:', voiceId);
+          if (voiceId) {
+            downloadedSet.add(href);
+          }
         }
-        const status = await offlineAudioManager.getStatus(bookId, voiceId);
-        setDownloadedHrefs(status.downloadedHrefs);
+        // console.log('[TOCView] Downloaded hrefs:', Array.from(downloadedSet));
+        setDownloadedHrefs(downloadedSet);
       } catch (err) {
         console.error('Error loading downloaded hrefs:', err);
       }
@@ -236,91 +257,14 @@ const TOCView: React.FC<{
     [bookKey, getView],
   );
 
-  const handleDownloadSection = useCallback(
-    async (item: TOCItem) => {
-      if (!item.href) return;
+  // Handler to open section offline audio dialog
+  const handleOpenOfflineAudioDialog = useCallback((item: TOCItem) => {
+    setOfflineDialogItem(item);
+  }, []);
 
-      setDownloadingHrefs((prev) => new Set([...prev, item.href!]));
-
-      try {
-        await offlineAudioManager.init();
-        const view = getView(bookKey);
-        if (!view?.book) {
-          console.error('Book not found');
-          return;
-        }
-
-        // Determine voice ID logic:
-        // 1. Existing download for this book?
-        let voiceId = await offlineAudioManager.getDownloadedVoice(bookId);
-
-        // 2. Book-specific preference?
-        if (!voiceId) {
-          voiceId = TTSUtils.getBookPreferredVoice(bookId);
-        }
-
-        // 3. Active Online Voice? (Check view settings)
-        if (!voiceId) {
-          const viewSettings = getViewSettings(bookKey);
-          if (viewSettings?.ttsVoice) {
-            voiceId = viewSettings.ttsVoice;
-          }
-        }
-
-        // 4. Global preference?
-        if (!voiceId) {
-          const langVal = view.book.metadata?.language;
-          const primaryLang = typeof langVal === 'string' ? langVal : 'en';
-
-          const preferredClient = TTSUtils.getPreferredClient();
-          if (preferredClient) {
-            const globalVoice = TTSUtils.getPreferredVoice(preferredClient, primaryLang);
-            if (globalVoice) {
-              voiceId = globalVoice;
-            }
-          }
-        }
-
-        // 5. Fallback
-        if (!voiceId) {
-          voiceId = 'en-US-AriaNeural';
-        }
-
-        await offlineAudioManager.downloadSingleSection({
-          bookHash: bookId,
-          bookDoc: view.book,
-          tocItem: item,
-          voiceId,
-          rate: 1.0,
-          pitch: 1.0,
-          primaryLang: 'en',
-        });
-      } catch (err) {
-        console.error('Error downloading section:', err);
-      } finally {
-        setDownloadingHrefs((prev) => {
-          const next = new Set(prev);
-          next.delete(item.href!);
-          return next;
-        });
-      }
-    },
-    [bookId, bookKey, getView],
-  );
-
-  const handleDeleteSection = useCallback(
-    async (item: TOCItem) => {
-      if (!item.href) return;
-      try {
-        await offlineAudioManager.init();
-        const voiceId = 'en-US-AriaNeural'; // TODO: Get from settings
-        await offlineAudioManager.deleteSingleSection(bookId, item.href, voiceId);
-      } catch (err) {
-        console.error('Error deleting section audio:', err);
-      }
-    },
-    [bookId],
-  );
+  const handleCloseOfflineAudioDialog = useCallback(() => {
+    setOfflineDialogItem(null);
+  }, []);
 
   const expandParents = useCallback((toc: TOCItem[], href: string) => {
     const parentItems = findParentPath(toc, href)
@@ -367,11 +311,9 @@ const TOCView: React.FC<{
       bookKey,
       activeHref,
       downloadedHrefs,
-      downloadingHrefs,
       onToggleExpand: handleToggleExpand,
       onItemClick: handleItemClick,
-      onDownloadSection: handleDownloadSection,
-      onDeleteSection: handleDeleteSection,
+      onOpenOfflineAudioDialog: handleOpenOfflineAudioDialog,
     };
 
     return data;
@@ -381,11 +323,9 @@ const TOCView: React.FC<{
     bookKey,
     activeHref,
     downloadedHrefs,
-    downloadingHrefs,
     handleToggleExpand,
     handleItemClick,
-    handleDownloadSection,
-    handleDeleteSection,
+    handleOpenOfflineAudioDialog,
   ]);
 
   useEffect(() => {
@@ -409,47 +349,57 @@ const TOCView: React.FC<{
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [progress, scrollToActiveItem, isInCooldown]);
 
-  return sections && sections.length > 256 ? (
-    <div
-      className='virtual-list mt-2 rounded'
-      data-overlayscrollbars-initialize=''
-      ref={containerRef}
-    >
-      <VirtualList
-        ref={vitualListRef}
-        outerRef={listOuterRef}
-        width='100%'
-        height={containerHeight}
-        itemCount={flatItems.length}
-        itemSize={virtualItemSize}
-        itemData={virtualListData}
-        overscanCount={20}
-        initialScrollOffset={
-          appService?.isAndroidApp && activeItemIndex >= 0
-            ? Math.max(0, activeItemIndex * virtualItemSize - containerHeight / 2)
-            : undefined
-        }
-      >
-        {VirtualListRow}
-      </VirtualList>
-    </div>
-  ) : (
-    <div className='static-list mt-2 rounded' ref={staticListRef}>
-      {flatItems.map((flatItem, index) => (
-        <StaticListRow
-          key={`static-row-${index}`}
+  return (
+    <>
+      {sections && sections.length > 256 ? (
+        <div
+          className='virtual-list mt-2 rounded'
+          data-overlayscrollbars-initialize=''
+          ref={containerRef}
+        >
+          <VirtualList
+            ref={vitualListRef}
+            outerRef={listOuterRef}
+            width='100%'
+            height={containerHeight}
+            itemCount={flatItems.length}
+            itemSize={virtualItemSize}
+            itemData={virtualListData}
+            overscanCount={20}
+            initialScrollOffset={
+              appService?.isAndroidApp && activeItemIndex >= 0
+                ? Math.max(0, activeItemIndex * virtualItemSize - containerHeight / 2)
+                : undefined
+            }
+          >
+            {VirtualListRow}
+          </VirtualList>
+        </div>
+      ) : (
+        <div className='static-list mt-2 rounded' ref={staticListRef}>
+          {flatItems.map((flatItem, index) => (
+            <StaticListRow
+              key={`static-row-${index}`}
+              bookKey={bookKey}
+              flatItem={flatItem}
+              activeHref={activeHref}
+              downloadedHrefs={downloadedHrefs}
+              onToggleExpand={handleToggleExpand}
+              onItemClick={handleItemClick}
+              onOpenOfflineAudioDialog={handleOpenOfflineAudioDialog}
+            />
+          ))}
+        </div>
+      )}
+      {offlineDialogItem && (
+        <OfflineAudioSectionDialog
           bookKey={bookKey}
-          flatItem={flatItem}
-          activeHref={activeHref}
-          downloadedHrefs={downloadedHrefs}
-          downloadingHrefs={downloadingHrefs}
-          onToggleExpand={handleToggleExpand}
-          onItemClick={handleItemClick}
-          onDownloadSection={handleDownloadSection}
-          onDeleteSection={handleDeleteSection}
+          tocItem={offlineDialogItem}
+          isOpen={!!offlineDialogItem}
+          onClose={handleCloseOfflineAudioDialog}
         />
-      ))}
-    </div>
+      )}
+    </>
   );
 };
 export default TOCView;

@@ -249,6 +249,11 @@ class OfflineAudioManager extends EventTarget {
 
         // Store audio chunk with unique href per block
         const chunkHref = `${href}#block-${blockIndex}`;
+        // console.log('[OfflineAudioManager] Saving audio chunk:', {
+        //   bookHash,
+        //   href: chunkHref,
+        //   voiceId,
+        // });
 
         await offlineAudioStorage.saveAudio({
           bookHash,
@@ -640,6 +645,14 @@ class OfflineAudioManager extends EventTarget {
    */
   async getDownloadedVoice(bookHash: string): Promise<string | null> {
     return offlineAudioStorage.getDownloadedVoice(bookHash);
+  }
+
+  /**
+   * Get the voice ID downloaded for a specific section/chapter.
+   * Returns null if no audio exists for this section.
+   */
+  async getDownloadedVoiceForSection(bookHash: string, href: string): Promise<string | null> {
+    return offlineAudioStorage.getDownloadedVoiceForSection(bookHash, href);
   }
 }
 

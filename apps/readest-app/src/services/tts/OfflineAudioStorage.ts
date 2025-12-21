@@ -181,17 +181,17 @@ class OfflineAudioStorage {
 
       request.onsuccess = () => {
         const records = request.result || [];
-        console.log('[OfflineAudioStorage] Retrieved audio records:', {
-          bookHash,
-          recordCount: records.length,
-          records: records.map((r) => ({
-            id: r.id,
-            href: r.href,
-            voiceId: r.voiceId,
-            audioDataSize: r.audioData?.length || 0,
-            downloadedAt: new Date(r.downloadedAt).toISOString(),
-          })),
-        });
+        // console.log('[OfflineAudioStorage] Retrieved audio records:', {
+        //   bookHash,
+        //   recordCount: records.length,
+        //   records: records.map((r) => ({
+        //     id: r.id,
+        //     href: r.href,
+        //     voiceId: r.voiceId,
+        //     audioDataSize: r.audioData?.length || 0,
+        //     downloadedAt: new Date(r.downloadedAt).toISOString(),
+        //   })),
+        // });
         resolve(records);
       };
       request.onerror = () => {
@@ -396,6 +396,51 @@ class OfflineAudioStorage {
         // Find any completed section to determine the voice ID
         const completed = completions.find((c) => c.isComplete);
         resolve(completed ? completed.voiceId : null);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  /**
+   * Get the voice ID downloaded for a specific section/chapter.
+   * Returns null if no audio exists for this section.
+   */
+  async getDownloadedVoiceForSection(bookHash: string, href: string): Promise<string | null> {
+    if (!this.db) await this.init();
+
+    // Strip any existing fragment from the section href (e.g., chapter1.xhtml#id1 -> chapter1.xhtml)
+    const baseHref = href.split('#')[0] || href;
+    console.log('[OfflineAudioStorage] getDownloadedVoiceForSection:', {
+      bookHash,
+      href,
+      baseHref,
+    });
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([AUDIO_STORE], 'readonly');
+      const store = transaction.objectStore(AUDIO_STORE);
+      const index = store.index('bookHash');
+      const request = index.getAll(bookHash);
+
+      request.onsuccess = () => {
+        const records = request.result as OfflineAudioRecord[];
+        // console.log(
+        //   '[OfflineAudioStorage] Found records:',
+        //   records.length,
+        //   'sample hrefs:',
+        //   records.slice(0, 3).map((r) => r.href),
+        // );
+        // Find any record matching this section's base href (without fragment)
+        // Audio is stored as chapter1.xhtml#block-0, chapter1.xhtml#block-1, etc.
+        const sectionRecord = records.find((r) => {
+          const recordBaseHref = r.href.split('#')[0] || r.href;
+          return recordBaseHref === baseHref;
+        });
+        // console.log(
+        //   '[OfflineAudioStorage] Match result:',
+        //   sectionRecord ? sectionRecord.voiceId : null,
+        // );
+        resolve(sectionRecord ? sectionRecord.voiceId : null);
       };
       request.onerror = () => reject(request.error);
     });

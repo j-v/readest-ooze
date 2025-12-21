@@ -24,18 +24,6 @@ export class TTSUtils {
     localStorage.setItem(this.LOCAL_STORAGE_KEY, JSON.stringify(preferences));
   }
 
-  static setBookPreferredVoice(bookHash: string, voiceId: string): void {
-    if (!bookHash || !voiceId) return;
-    const preferences = this.getPreferences();
-    preferences[`book-voice-${bookHash}`] = voiceId;
-    localStorage.setItem(this.LOCAL_STORAGE_KEY, JSON.stringify(preferences));
-  }
-
-  static getBookPreferredVoice(bookHash: string): string | null {
-    const preferences = this.getPreferences();
-    return preferences[`book-voice-${bookHash}`] || null;
-  }
-
   static getPreferredClient(): string | null {
     const preferences = this.getPreferences();
     return preferences[this.PREFERRED_CLIENT_KEY] || null;

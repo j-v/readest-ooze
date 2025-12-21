@@ -148,25 +148,34 @@ export class OfflineTTSClient implements TTSClient {
     }
 
     try {
-      // Check if there is a specific voice downloaded for this book
-      const downloadedVoiceId = await offlineAudioStorage.getDownloadedVoice(this.#bookHash);
+      // Check if there is a voice downloaded for this SPECIFIC SECTION (per-chapter support)
+      const sectionVoiceId = await offlineAudioStorage.getDownloadedVoiceForSection(
+        this.#bookHash,
+        this.#sectionHref,
+      );
 
-      // If we found a specific voice downloaded for this book, use it instead of the requested one
-      if (downloadedVoiceId && downloadedVoiceId !== this.#voiceId) {
-        console.log(
-          `[OfflineTTSClient] Using downloaded voice ${downloadedVoiceId} instead of requested ${this.#voiceId}`,
-        );
-        this.#voiceId = downloadedVoiceId;
-      }
-
-      if (!this.#voiceId) {
+      if (sectionVoiceId) {
+        // Use the section's downloaded voice
+        if (sectionVoiceId !== this.#voiceId) {
+          console.log(
+            `[OfflineTTSClient] Using section-specific voice ${sectionVoiceId} instead of ${this.#voiceId}`,
+          );
+        }
+        this.#voiceId = sectionVoiceId;
+      } else {
+        // No audio downloaded for this section
+        console.log('[OfflineTTSClient] No audio downloaded for section:', this.#sectionHref);
         return false;
       }
 
+      // Strip fragment from section href for matching (e.g., chapter1.xhtml#id1 -> chapter1.xhtml)
+      const baseSectionHref = this.#sectionHref.split('#')[0] || this.#sectionHref;
+
       const allAudio = await offlineAudioStorage.getBookAudio(this.#bookHash);
-      const sectionAudio = allAudio.filter(
-        (record) => record.href.startsWith(this.#sectionHref) && record.voiceId === this.#voiceId,
-      );
+      const sectionAudio = allAudio.filter((record) => {
+        const recordBaseHref = record.href.split('#')[0] || record.href;
+        return recordBaseHref === baseSectionHref && record.voiceId === this.#voiceId;
+      });
 
       const hasAudio = sectionAudio.length > 0;
       console.log('[OfflineTTSClient] hasOfflineAudio check:', {

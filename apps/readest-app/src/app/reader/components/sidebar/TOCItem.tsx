@@ -1,7 +1,7 @@
 import clsx from 'clsx';
 import React, { useCallback } from 'react';
 import { ListChildComponentProps } from 'react-window';
-import { MdCheckCircle, MdDownload, MdDelete, MdAccessTime } from 'react-icons/md';
+import { MdCheckCircle, MdDownload } from 'react-icons/md';
 import { TOCItem } from '@/libs/document';
 import { getContentMd5 } from '@/utils/misc';
 import ContextMenu from '@/components/ContextMenu';
@@ -38,169 +38,148 @@ const TOCItemView = React.memo<{
   itemSize?: number;
   isActive: boolean;
   isDownloaded?: boolean;
-  isDownloading?: boolean;
   onToggleExpand: (item: TOCItem) => void;
   onItemClick: (item: TOCItem) => void;
-  onDownloadSection?: (item: TOCItem) => void;
-  onDeleteSection?: (item: TOCItem) => void;
-}>(({ flatItem, itemSize, isActive, isDownloaded, isDownloading, onToggleExpand, onItemClick, onDownloadSection, onDeleteSection }) => {
-  const { item, depth } = flatItem;
-  const {
-    coords: contextMenu,
-    closeMenu,
-    triggerRef: itemRef,
-    menuRef: contextMenuRef,
-    triggerProps,
-    triggerStyle,
-    wrapMenuAction,
-    shouldPreventClick,
-  } = useLongPressContextMenu({
-    disabled: !item.href || (!onDownloadSection && !onDeleteSection),
-    longPressMs: 500,
-    moveThreshold: 30,
-  });
+  onOpenOfflineAudioDialog?: (item: TOCItem) => void;
+}>(
+  ({
+    flatItem,
+    itemSize,
+    isActive,
+    isDownloaded,
+    onToggleExpand,
+    onItemClick,
+    onOpenOfflineAudioDialog,
+  }) => {
+    const { item, depth } = flatItem;
+    const {
+      coords: contextMenu,
+      closeMenu,
+      triggerRef: itemRef,
+      menuRef: contextMenuRef,
+      triggerProps,
+      triggerStyle,
+      wrapMenuAction,
+      shouldPreventClick,
+    } = useLongPressContextMenu({
+      disabled: !item.href || !onOpenOfflineAudioDialog,
+      longPressMs: 500,
+      moveThreshold: 30,
+    });
 
-  const handleToggleExpand = useCallback(
-    (event: React.MouseEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-      onToggleExpand(item);
-    },
-    [item, onToggleExpand],
-  );
-
-  const handleClickItem = useCallback(
-    (event: React.MouseEvent | React.KeyboardEvent) => {
-      if (shouldPreventClick()) {
+    const handleToggleExpand = useCallback(
+      (event: React.MouseEvent) => {
         event.preventDefault();
         event.stopPropagation();
-        return;
+        onToggleExpand(item);
+      },
+      [item, onToggleExpand],
+    );
+
+    const handleClickItem = useCallback(
+      (event: React.MouseEvent | React.KeyboardEvent) => {
+        if (shouldPreventClick()) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        event.preventDefault();
+        onItemClick(item);
+      },
+      [item, onItemClick, shouldPreventClick],
+    );
+
+    const handleOpenOfflineAudio = wrapMenuAction(() => {
+      if (onOpenOfflineAudioDialog) {
+        onOpenOfflineAudioDialog(item);
       }
-      event.preventDefault();
-      onItemClick(item);
-    },
-    [item, onItemClick, shouldPreventClick],
-  );
+    });
 
-  const handleDownload = wrapMenuAction(() => {
-    if (onDownloadSection) {
-      onDownloadSection(item);
-    }
-  });
-
-  const handleDelete = wrapMenuAction(() => {
-    if (onDeleteSection) {
-      onDeleteSection(item);
-    }
-  });
-
-  return (
-    <>
-      <div
-        ref={itemRef}
-        tabIndex={0}
-        role='treeitem'
-        onClick={item.href ? handleClickItem : undefined}
-        onKeyDown={item.href ? (e) => e.key === 'Enter' && handleClickItem(e) : undefined}
-        {...triggerProps}
-        aria-expanded={flatItem.isExpanded ? 'true' : 'false'}
-        aria-selected={isActive ? 'true' : 'false'}
-        data-href={item.href ? getContentMd5(item.href) : undefined}
-        className={clsx(
-          'flex w-full cursor-pointer items-center rounded-md py-4 sm:py-2',
-          isActive
-            ? 'text-bold-in-eink sm:bg-base-300/65 sm:hover:bg-base-300/75 sm:text-base-content text-blue-500'
-            : 'sm:hover:bg-base-300/75',
-        )}
-      style={{
-        height: itemSize ? `${itemSize}px` : 'auto',
-        paddingInlineStart: `${(depth + 1) * 12}px`,
-        ...triggerStyle,
-      }}
-    >
-      {item.subitems && (
-        <button
-          onClick={handleToggleExpand}
-          onKeyDown={(e) => {
-            e.stopPropagation();
-          }}
-          className='inline-block cursor-pointer'
+    return (
+      <>
+        <div
+          ref={itemRef}
+          tabIndex={0}
+          role='treeitem'
+          onClick={item.href ? handleClickItem : undefined}
+          onKeyDown={item.href ? (e) => e.key === 'Enter' && handleClickItem(e) : undefined}
+          {...triggerProps}
+          aria-expanded={flatItem.isExpanded ? 'true' : 'false'}
+          aria-selected={isActive ? 'true' : 'false'}
+          data-href={item.href ? getContentMd5(item.href) : undefined}
+          className={clsx(
+            'flex w-full cursor-pointer items-center rounded-md py-4 sm:py-2',
+            isActive
+              ? 'text-bold-in-eink sm:bg-base-300/65 sm:hover:bg-base-300/75 sm:text-base-content text-blue-500'
+              : 'sm:hover:bg-base-300/75',
+          )}
           style={{
-            padding: '12px',
-            margin: '-12px',
+            height: itemSize ? `${itemSize}px` : 'auto',
+            paddingInlineStart: `${(depth + 1) * 12}px`,
+            ...triggerStyle,
           }}
         >
-          {createExpanderIcon(flatItem.isExpanded || false)}
-        </button>
-      )}
-      <div
-        className='ms-2 truncate text-ellipsis'
-        style={{
-          maxWidth: 'calc(100% - 24px)',
-          whiteSpace: 'nowrap',
-          textOverflow: 'ellipsis',
-        }}
-      >
-        {item.label}
-      </div>
-      {isDownloading && (
-        <MdAccessTime 
-          className='text-warning ms-2 flex-shrink-0 animate-spin' 
-          title='Downloading audio'
-          size={16}
-        />
-      )}
-      {isDownloaded && (
-        <MdCheckCircle 
-          className='text-success ms-2 flex-shrink-0' 
-          title='Downloaded for offline listening'
-          size={16}
-        />
-      )}
-      {item.location && (
-        <div className='text-base-content/50 ms-auto ps-1 text-xs sm:pe-1'>
-          {item.location.current + 1}
-        </div>
-      )}
-      </div>
-
-      {contextMenu && (
-        <div ref={contextMenuRef}>
-          <ContextMenu
-            x={contextMenu.x}
-            y={contextMenu.y}
-            onClose={closeMenu}
+          {item.subitems && (
+            <button
+              onClick={handleToggleExpand}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+              }}
+              className='inline-block cursor-pointer'
+              style={{
+                padding: '12px',
+                margin: '-12px',
+              }}
+            >
+              {createExpanderIcon(flatItem.isExpanded || false)}
+            </button>
+          )}
+          <div
+            className='ms-2 truncate text-ellipsis'
+            style={{
+              maxWidth: 'calc(100% - 24px)',
+              whiteSpace: 'nowrap',
+              textOverflow: 'ellipsis',
+            }}
           >
-            {!isDownloaded && onDownloadSection && (
-              <li>
-                <button 
-                  onClick={handleDownload}
-                  onTouchEnd={handleDownload}
-                  className='flex items-center gap-2'
-                >
-                  <MdDownload size={16} />
-                  <span>Download Audio</span>
-                </button>
-              </li>
-            )}
-            {isDownloaded && onDeleteSection && (
-              <li>
-                <button 
-                  onClick={handleDelete}
-                  onTouchEnd={handleDelete}
-                  className='flex items-center gap-2 text-error'
-                >
-                  <MdDelete size={16} />
-                  <span>Delete Audio</span>
-                </button>
-              </li>
-            )}
-          </ContextMenu>
+            {item.label}
+          </div>
+          {isDownloaded && (
+            <MdCheckCircle
+              className='text-success ms-2 flex-shrink-0'
+              title='Downloaded for offline listening'
+              size={16}
+            />
+          )}
+          {item.location && (
+            <div className='text-base-content/50 ms-auto ps-1 text-xs sm:pe-1'>
+              {item.location.current + 1}
+            </div>
+          )}
         </div>
-      )}
-    </>
-  );
-});
+
+        {contextMenu && (
+          <div ref={contextMenuRef}>
+            <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={closeMenu}>
+              {onOpenOfflineAudioDialog && (
+                <li>
+                  <button
+                    onClick={handleOpenOfflineAudio}
+                    onTouchEnd={handleOpenOfflineAudio}
+                    className='flex items-center gap-2'
+                  >
+                    <MdDownload size={16} />
+                    <span>Offline Audio...</span>
+                  </button>
+                </li>
+              )}
+            </ContextMenu>
+          </div>
+        )}
+      </>
+    );
+  },
+);
 
 TOCItemView.displayName = 'TOCItemView';
 interface ListRowProps {
@@ -209,11 +188,9 @@ interface ListRowProps {
   itemSize?: number;
   activeHref: string | null;
   downloadedHrefs?: Set<string>;
-  downloadingHrefs?: Set<string>;
   onToggleExpand: (item: TOCItem) => void;
   onItemClick: (item: TOCItem) => void;
-  onDownloadSection?: (item: TOCItem) => void;
-  onDeleteSection?: (item: TOCItem) => void;
+  onOpenOfflineAudioDialog?: (item: TOCItem) => void;
 }
 
 export const StaticListRow: React.FC<ListRowProps> = ({
@@ -222,16 +199,12 @@ export const StaticListRow: React.FC<ListRowProps> = ({
   itemSize,
   activeHref,
   downloadedHrefs,
-  downloadingHrefs,
   onToggleExpand,
   onItemClick,
-  onDownloadSection,
-  onDeleteSection,
+  onOpenOfflineAudioDialog,
 }) => {
   const isActive = activeHref === flatItem.item.href;
   const isDownloaded = downloadedHrefs?.has(flatItem.item.href) || false;
-  const isDownloading = downloadingHrefs?.has(flatItem.item.href) || false;
-
 
   return (
     <div
@@ -247,11 +220,9 @@ export const StaticListRow: React.FC<ListRowProps> = ({
         itemSize={itemSize}
         isActive={isActive}
         isDownloaded={isDownloaded}
-        isDownloading={isDownloading}
         onToggleExpand={onToggleExpand}
         onItemClick={onItemClick}
-        onDownloadSection={onDownloadSection}
-        onDeleteSection={onDeleteSection}
+        onOpenOfflineAudioDialog={onOpenOfflineAudioDialog}
       />
     </div>
   );
@@ -265,11 +236,9 @@ export const VirtualListRow: React.FC<
       itemSize: number;
       activeHref: string | null;
       downloadedHrefs?: Set<string>;
-      downloadingHrefs?: Set<string>;
       onToggleExpand: (item: TOCItem) => void;
       onItemClick: (item: TOCItem) => void;
-      onDownloadSection?: (item: TOCItem) => void;
-      onDeleteSection?: (item: TOCItem) => void;
+      onOpenOfflineAudioDialog?: (item: TOCItem) => void;
     };
   }
 > = ({ index, style, data }) => {
@@ -279,11 +248,9 @@ export const VirtualListRow: React.FC<
     activeHref,
     itemSize,
     downloadedHrefs,
-    downloadingHrefs,
     onToggleExpand,
     onItemClick,
-    onDownloadSection,
-    onDeleteSection,
+    onOpenOfflineAudioDialog,
   } = data;
   const flatItem = flatItems[index];
 
@@ -295,11 +262,9 @@ export const VirtualListRow: React.FC<
         itemSize={itemSize - 1}
         activeHref={activeHref}
         downloadedHrefs={downloadedHrefs}
-        downloadingHrefs={downloadingHrefs}
         onToggleExpand={onToggleExpand}
         onItemClick={onItemClick}
-        onDownloadSection={onDownloadSection}
-        onDeleteSection={onDeleteSection}
+        onOpenOfflineAudioDialog={onOpenOfflineAudioDialog}
       />
     </div>
   );
