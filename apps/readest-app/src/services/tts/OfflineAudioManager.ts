@@ -654,6 +654,15 @@ class OfflineAudioManager extends EventTarget {
   async getDownloadedVoiceForSection(bookHash: string, href: string): Promise<string | null> {
     return offlineAudioStorage.getDownloadedVoiceForSection(bookHash, href);
   }
+
+  /**
+   * Get all downloaded section hrefs for a book in a single query.
+   * Returns a Set of base hrefs (without #block-* fragments) that have audio.
+   * More efficient than calling getDownloadedVoiceForSection for each section.
+   */
+  async getAllDownloadedSections(bookHash: string): Promise<Set<string>> {
+    return offlineAudioStorage.getAllDownloadedSections(bookHash);
+  }
 }
 
 export const offlineAudioManager = new OfflineAudioManager();

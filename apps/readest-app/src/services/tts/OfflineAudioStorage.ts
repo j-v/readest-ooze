@@ -410,11 +410,6 @@ class OfflineAudioStorage {
 
     // Strip any existing fragment from the section href (e.g., chapter1.xhtml#id1 -> chapter1.xhtml)
     const baseHref = href.split('#')[0] || href;
-    console.log('[OfflineAudioStorage] getDownloadedVoiceForSection:', {
-      bookHash,
-      href,
-      baseHref,
-    });
 
     return new Promise((resolve, reject) => {
       const transaction = this.db!.transaction([AUDIO_STORE], 'readonly');
@@ -441,6 +436,36 @@ class OfflineAudioStorage {
         //   sectionRecord ? sectionRecord.voiceId : null,
         // );
         resolve(sectionRecord ? sectionRecord.voiceId : null);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  /**
+   * Get all downloaded section hrefs for a book in a single query.
+   * Returns a Set of base hrefs (without #block-* fragments) that have audio.
+   * This is more efficient than calling getDownloadedVoiceForSection for each section.
+   */
+  async getAllDownloadedSections(bookHash: string): Promise<Set<string>> {
+    if (!this.db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([AUDIO_STORE], 'readonly');
+      const store = transaction.objectStore(AUDIO_STORE);
+      const index = store.index('bookHash');
+      const request = index.getAll(bookHash);
+
+      request.onsuccess = () => {
+        const records = request.result as OfflineAudioRecord[];
+        const downloadedBaseHrefs = new Set<string>();
+
+        for (const record of records) {
+          // Extract base href (remove #block-* fragment)
+          const baseHref = record.href.split('#')[0] || record.href;
+          downloadedBaseHrefs.add(baseHref);
+        }
+
+        resolve(downloadedBaseHrefs);
       };
       request.onerror = () => reject(request.error);
     });

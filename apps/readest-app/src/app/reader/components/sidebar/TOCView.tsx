@@ -160,38 +160,13 @@ const TOCView: React.FC<{
       }
     }
 
-    // Load downloaded hrefs - check per-section if any voice is downloaded
+    // Load downloaded hrefs - use batch query for efficiency
     const loadDownloadedHrefs = async () => {
       try {
         await offlineAudioManager.init();
-        // Get all sections from main TOC and check each
-        const allHrefs = new Set<string>();
-
-        // Helper to collect all hrefs from TOC
-        const collectHrefs = (items: TOCItem[]) => {
-          for (const item of items) {
-            if (item.href) {
-              allHrefs.add(item.href);
-            }
-            if (item.subitems) {
-              collectHrefs(item.subitems);
-            }
-          }
-        };
-        collectHrefs(toc);
-
-        // Check each href for downloaded audio
-        const downloadedSet = new Set<string>();
-        // console.log('[TOCView] Checking hrefs for downloads:', Array.from(allHrefs).slice(0, 5));
-        for (const href of allHrefs) {
-          const voiceId = await offlineAudioManager.getDownloadedVoiceForSection(bookId, href);
-          // console.log('[TOCView] Checking href:', href, '-> voiceId:', voiceId);
-          if (voiceId) {
-            downloadedSet.add(href);
-          }
-        }
-        // console.log('[TOCView] Downloaded hrefs:', Array.from(downloadedSet));
-        setDownloadedHrefs(downloadedSet);
+        // Get all downloaded sections in a single query
+        const downloadedBaseHrefs = await offlineAudioManager.getAllDownloadedSections(bookId);
+        setDownloadedHrefs(downloadedBaseHrefs);
       } catch (err) {
         console.error('Error loading downloaded hrefs:', err);
       }
@@ -222,7 +197,8 @@ const TOCView: React.FC<{
       offlineAudioManager.removeEventListener('section-download-complete', handleDownloadUpdate);
       offlineAudioManager.removeEventListener('section-download-deleted', handleDownloadUpdate);
     };
-  }, [expandedItems, handleInteraction, bookId]);
+    // Note: expandedItems removed from deps - checkmarks don't depend on expansion state
+  }, [handleInteraction, bookId]);
 
   const activeHref = useMemo(() => progress?.sectionHref || null, [progress?.sectionHref]);
   const flatItems = useFlattenedTOC(toc, expandedItems);
