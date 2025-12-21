@@ -46,6 +46,11 @@ export class TTSController extends EventTarget {
   ttsHttpVoices: TTSVoice[] = [];
   ttsTargetLang: string = '';
 
+  // Context tracking for offline TTS
+  #bookHash: string = '';
+  #lastSectionHref: string = '';
+  #voiceId: string = '';
+
   options: TTSHighlightOptions = { style: 'highlight', color: 'gray' };
 
   constructor(appService: AppService | null, view: FoliateView) {
@@ -69,33 +74,40 @@ export class TTSController extends EventTarget {
   async init(bookHash?: string, sectionHref?: string, voiceId?: string, lang?: string) {
     // Always initialize offline client first (lightweight, no network calls)
     await this.ttsOfflineClient.init();
-    
+
+    // Store context for offline TTS updates during playback
+    if (bookHash) this.#bookHash = bookHash;
+    if (sectionHref) this.#lastSectionHref = sectionHref;
+    if (voiceId) this.#voiceId = voiceId;
+
     // Check if offline audio is available BEFORE initializing any online clients
     if (bookHash && sectionHref && voiceId) {
       try {
-         if (!this.ttsOfflineClient.setContext) {
-           console.warn('Offline TTS client does not support setContext');
-         } else {
-           this.ttsOfflineClient.setContext(bookHash, sectionHref, voiceId, lang);
-           const hasOfflineAudio = await (this.ttsOfflineClient as OfflineTTSClient).hasOfflineAudio();
-         
-           if (hasOfflineAudio) {
-             // Offline audio is available - skip all online initialization!
-             this.ttsClient = this.ttsOfflineClient;
-             await this.ttsClient.setRate(this.ttsRate);
-             console.log('Using offline TTS - skipping online client initialization');
-             return;
-           }
-         }
+        if (!this.ttsOfflineClient.setContext) {
+          console.warn('Offline TTS client does not support setContext');
+        } else {
+          this.ttsOfflineClient.setContext(bookHash, sectionHref, voiceId, lang);
+          const hasOfflineAudio = await (
+            this.ttsOfflineClient as OfflineTTSClient
+          ).hasOfflineAudio();
+
+          if (hasOfflineAudio) {
+            // Offline audio is available - skip all online initialization!
+            this.ttsClient = this.ttsOfflineClient;
+            await this.ttsClient.setRate(this.ttsRate);
+            console.log('Using offline TTS - skipping online client initialization');
+            return;
+          }
+        }
       } catch (error) {
         console.warn('Error checking offline audio, falling back to online:', error);
         // Continue to online initialization on error
       }
     }
-    
+
     // Initialize online clients only if offline audio is not available
     const availableClients = [];
-    
+
     if (await this.ttsEdgeClient.init()) {
       availableClients.push(this.ttsEdgeClient);
     }
@@ -152,12 +164,12 @@ export class TTSController extends EventTarget {
     if (!this.ttsOfflineClient.setContext || !this.ttsOfflineClient.initialized) {
       return false;
     }
-    
+
     // Set context then check if audio is available
     this.ttsOfflineClient.setContext(bookHash, sectionHref, voiceId, lang);
 
     const hasAudio = await (this.ttsOfflineClient as OfflineTTSClient).hasOfflineAudio();
-    
+
     if (hasAudio) {
       // Store the current online client before switching -- TODO use this for restoring in disableOfflineAudio?
       // const currentClient = this.ttsClient;
@@ -166,9 +178,54 @@ export class TTSController extends EventTarget {
       console.log('Switched to offline TTS - audio available for section');
       return true;
     }
-    
+
     console.log('Offline audio not available, using online TTS');
     return false;
+  }
+
+  /**
+   * Update offline TTS context if the current section has changed.
+   * This should be called before speak() when using offline TTS to handle chapter transitions.
+   * Returns true if offline audio is available for the new section.
+   */
+  async updateOfflineContextIfNeeded(): Promise<boolean> {
+    // Only relevant when using offline TTS
+    if (this.ttsClient.name !== 'offline-tts' || !this.ttsOfflineClient.setContext) {
+      return true; // Not using offline, no update needed
+    }
+
+    // Get current section from the view's TTS state
+    let currentHref = this.view.tts?.section?.id || '';
+
+    // Fallback: try to get section from renderer if TTS state is not ready
+    if (!currentHref && this.view.renderer?.getContents) {
+      const contents = this.view.renderer.getContents();
+      const contentIndex = contents[0]?.index;
+      if (typeof contentIndex === 'number') {
+        currentHref = this.view.book?.sections?.[contentIndex]?.id || '';
+      }
+    }
+
+    if (!currentHref || currentHref === this.#lastSectionHref) {
+      return true; // No change
+    }
+
+    this.#lastSectionHref = currentHref;
+
+    // Update offline client context for the new section
+    this.ttsOfflineClient.setContext(this.#bookHash, currentHref, this.#voiceId, this.ttsLang);
+
+    // Check if offline audio is available for the new section
+    // It may have a different voice or no audio at all
+    const hasAudio = await (this.ttsOfflineClient as OfflineTTSClient).hasOfflineAudio();
+
+    if (!hasAudio) {
+      console.log('[TTSController] No offline audio for new section, switching to online');
+      await this.disableOfflineAudio();
+      return false;
+    }
+
+    return true;
   }
 
   /**
@@ -252,10 +309,16 @@ export class TTSController extends EventTarget {
   async #speak(ssml: string | undefined | Promise<string>) {
     await this.stop();
     this.#currentSpeakAbortController = new AbortController();
+    const speakController = this.#currentSpeakAbortController;
     const { signal } = this.#currentSpeakAbortController;
-   
+
     // Track if we're using offline TTS for fallback handling
     const isUsingOffline = this.ttsClient.name === 'offline-tts';
+
+    // Update offline context if section changed (handles chapter transitions)
+    if (isUsingOffline) {
+      await this.updateOfflineContextIfNeeded();
+    }
 
     this.#currentSpeakPromise = new Promise(async (resolve, reject) => {
       try {
@@ -329,14 +392,15 @@ export class TTSController extends EventTarget {
             console.error('Failed to fall back to online TTS:', fallbackError);
           }
         }
-        
+
         if (signal.aborted) {
           resolve();
         } else {
           reject(e);
         }
       } finally {
-        if (this.#currentSpeakAbortController) {
+        // Only clean up if we are still the current controller
+        if (this.#currentSpeakAbortController === speakController) {
           this.#currentSpeakAbortController.abort();
           this.#currentSpeakAbortController = null;
         }
