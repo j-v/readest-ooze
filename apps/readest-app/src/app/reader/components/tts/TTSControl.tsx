@@ -327,13 +327,13 @@ const TTSControl: React.FC<TTSControlProps> = ({ bookKey, gridInsets }) => {
 
       setShowIndicator(true);
       const ttsController = new TTSController(appService, view);
-      
+
       // Get context for offline audio check
       const bookId = bookKey.split('-')[0]!;
       const voiceId = 'en-US-AriaNeural'; // TODO: Get from settings
       const currentHref = progress?.sectionHref || '';
       const initialLang = primaryLang || 'en';
-      
+
       // Pass context to init() - it will check offline audio FIRST before initializing online clients
       await ttsController.init(bookId, currentHref, voiceId, initialLang);
       await ttsController.initViewTTS(viewSettings.ttsHighlightOptions);
@@ -341,7 +341,7 @@ const TTSControl: React.FC<TTSControlProps> = ({ bookKey, gridInsets }) => {
       // After initViewTTS, view.tts is initialized; now fetch SSML
       const ssml = view.tts?.from(ttsFromRange);
       const lang = ssml ? parseSSMLLang(ssml, primaryLang) || 'en' : initialLang;
-      
+
       if (ssml) {
         setIsPlaying(true);
         setTtsLang(lang);

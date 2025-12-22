@@ -428,7 +428,10 @@ class OfflineAudioStorage {
 
       request.onsuccess = () => {
         const completions = request.result as SectionCompletion[];
-        const completion = completions.find((c) => c.href === baseHref && c.isComplete);
+        const completion = completions.find((c) => {
+          const completionBase = c.href.split('#')[0] || c.href;
+          return completionBase === baseHref && c.isComplete;
+        });
         resolve(completion ? completion.voiceId : null);
       };
       request.onerror = () => reject(request.error);

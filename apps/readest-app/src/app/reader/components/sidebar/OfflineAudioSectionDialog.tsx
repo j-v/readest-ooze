@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { MdDownload, MdClose, MdCheckCircle, MdError, MdDelete, MdCheck } from 'react-icons/md';
 import { RiVoiceAiFill } from 'react-icons/ri';
@@ -8,8 +8,8 @@ import { useReaderStore } from '@/store/readerStore';
 import { TTSVoicesGroup } from '@/services/tts';
 import { TTSUtils } from '@/services/tts/TTSUtils';
 import { TOCItem } from '@/libs/document';
-import { parseSSMLLang } from '@/utils/ssml';
 import { useBookDataStore } from '@/store/bookDataStore';
+import { useBookLanguage } from '@/hooks/useBookLanguage';
 
 interface OfflineAudioSectionDialogProps {
   bookKey: string;
@@ -27,6 +27,7 @@ const OfflineAudioSectionDialog: React.FC<OfflineAudioSectionDialogProps> = ({
   const _ = useTranslation();
   const { getView, getProgress, getViewSettings } = useReaderStore();
   const { getBookData } = useBookDataStore();
+  const ttsLang = useBookLanguage(bookKey);
 
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState({ downloaded: 0, total: 0 });
@@ -71,12 +72,6 @@ const OfflineAudioSectionDialog: React.FC<OfflineAudioSectionDialogProps> = ({
   useEffect(() => {
     const loadVoices = async () => {
       if (!bookDoc || !view) return;
-
-      const bookProgress = getProgress(bookKey);
-      const range = bookProgress?.range;
-      const ssml = range ? view.tts?.from(range) : undefined;
-      const primaryLang = getBookData(bookKey)?.book?.primaryLanguage || 'en';
-      const ttsLang = ssml ? parseSSMLLang(ssml, primaryLang) || 'en' : primaryLang;
 
       const groups = await offlineAudioManager.getVoices(ttsLang);
       setVoiceGroups(groups);
@@ -193,6 +188,8 @@ const OfflineAudioSectionDialog: React.FC<OfflineAudioSectionDialogProps> = ({
     }
   }, [bookId, downloadedVoiceId, href]);
 
+  const voiceDropdownRef = useRef<HTMLDetailsElement>(null);
+
   if (!isOpen) return null;
 
   const isDownloaded = !!downloadedVoiceId;
@@ -222,10 +219,8 @@ const OfflineAudioSectionDialog: React.FC<OfflineAudioSectionDialogProps> = ({
         </div>
 
         {/* Voice Selection */}
-        <div className='dropdown dropdown-bottom mb-4 w-full'>
-          <div
-            role='button'
-            tabIndex={0}
+        <details ref={voiceDropdownRef} className='dropdown dropdown-bottom mb-4 w-full'>
+          <summary
             className={clsx(
               'btn btn-outline w-full justify-between',
               (isDownloading || isDownloaded) && 'btn-disabled',
@@ -238,7 +233,7 @@ const OfflineAudioSectionDialog: React.FC<OfflineAudioSectionDialogProps> = ({
                   _('Select Voice')}
               </span>
             </div>
-          </div>
+          </summary>
           {!isDownloaded && !isDownloading && (
             <ul className='dropdown-content menu bg-base-100 rounded-box z-[1] block max-h-60 w-full overflow-y-auto p-2 shadow'>
               {voiceGroups.map((group) => (
@@ -258,7 +253,10 @@ const OfflineAudioSectionDialog: React.FC<OfflineAudioSectionDialogProps> = ({
                           if (document.activeElement instanceof HTMLElement)
                             document.activeElement.blur();
                           setSelectedVoiceId(voice.id);
-                          console.log('voice selected: ', voice.id);
+                          // Close the dropdown
+                          if (voiceDropdownRef.current) {
+                            voiceDropdownRef.current.removeAttribute('open');
+                          }
                         }}
                       >
                         <span>{voice.name}</span>
@@ -270,7 +268,7 @@ const OfflineAudioSectionDialog: React.FC<OfflineAudioSectionDialogProps> = ({
               ))}
             </ul>
           )}
-        </div>
+        </details>
 
         {/* Status */}
         <div className='space-y-3'>

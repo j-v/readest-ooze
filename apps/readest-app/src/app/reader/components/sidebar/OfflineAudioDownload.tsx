@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { MdDownload, MdClose, MdCheckCircle, MdError, MdDelete, MdCheck } from 'react-icons/md';
 import { RiVoiceAiFill } from 'react-icons/ri';
@@ -10,7 +10,7 @@ import { useReaderStore } from '@/store/readerStore';
 import { TTSVoicesGroup } from '@/services/tts';
 import { getLocale } from '@/utils/misc';
 import { useBookDataStore } from '@/store/bookDataStore';
-import { parseSSMLLang } from '@/utils/ssml';
+import { useBookLanguage } from '@/hooks/useBookLanguage';
 
 interface OfflineAudioDownloadProps {
   bookKey: string;
@@ -40,6 +40,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
   const bookDoc = view?.book || null;
   // Use stable bookId from bookKey (metaHash) to match TOCView and other components
   const bookId = bookKey.split('-')[0]!;
+  const ttsLang = useBookLanguage(bookKey);
 
   const loadStatus = useCallback(async () => {
     try {
@@ -85,12 +86,6 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
   useEffect(() => {
     const loadVoices = async () => {
       if (!bookDoc || !view) return;
-
-      const bookProgress = getProgress(bookKey);
-      const range = bookProgress?.range;
-      const ssml = range ? view.tts?.from(range) : undefined;
-      const primaryLang = getBookData(bookKey)?.book?.primaryLanguage || 'en';
-      const ttsLang = ssml ? parseSSMLLang(ssml, primaryLang) || 'en' : getTTSTargetLang() || 'en';
 
       const groups = await offlineAudioManager.getVoices(ttsLang);
       setVoiceGroups(groups);
@@ -245,6 +240,8 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
     return Math.round((progress.downloadedSections / progress.totalSections) * 100);
   };
 
+  const voiceDropdownRef = useRef<HTMLDetailsElement>(null);
+
   const hasDownloads = progress !== null;
   const isComplete = progress
     ? progress.downloadedSections === progress.totalSections && !progress.inProgress
@@ -266,10 +263,8 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
       </div>
 
       {/* Voice Selection */}
-      <div className='dropdown dropdown-bottom mb-4 w-full'>
-        <div
-          role='button'
-          tabIndex={0}
+      <details ref={voiceDropdownRef} className='dropdown dropdown-bottom mb-4 w-full'>
+        <summary
           className={clsx(
             'btn btn-outline w-full justify-between',
             (isDownloading || isPartiallyDownloaded) && 'btn-disabled',
@@ -283,20 +278,8 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
             </span>
           </div>
           <MdDownload className='rotate-90 text-xs' />
-        </div>
+        </summary>
         <ul className='dropdown-content menu bg-base-100 rounded-box z-[1] block max-h-60 w-full flex-nowrap overflow-y-auto p-2 shadow'>
-          {voiceGroups.map(
-            (group) => (
-              // (
-              <li
-                key={group.id}
-                className='menu-title px-2 py-1 text-xs font-bold uppercase tracking-wider opacity-50'
-              >
-                {group.name}
-              </li>
-            ),
-            // ) || [] /* safeguard */,
-          )}
           {voiceGroups.map((group) => (
             <React.Fragment key={group.id}>
               <li className='menu-title border-base-200 mt-2 border-b px-2 py-1 text-xs font-bold uppercase tracking-wider opacity-50 first:mt-0'>
@@ -314,6 +297,10 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
                       if (document.activeElement instanceof HTMLElement)
                         document.activeElement.blur();
                       setSelectedVoiceId(voice.id);
+                      // Close the dropdown
+                      if (voiceDropdownRef.current) {
+                        voiceDropdownRef.current.removeAttribute('open');
+                      }
                     }}
                   >
                     <span>{voice.name}</span>
@@ -324,7 +311,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
             </React.Fragment>
           ))}
         </ul>
-      </div>
+      </details>
 
       {/* Delete Confirmation Modal/Overlay (Inline) */}
       {showVoiceConfirm && (
