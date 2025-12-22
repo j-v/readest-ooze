@@ -7,32 +7,21 @@ to test
 
 issues with offline audio
 
-- too many logs of [OfflineAudioStorage] getDownloadedVoiceForSection:, slowing down checkmark rendering and offline voice loaing
-  - excessive re-renders/computations
-- not working when switching to new voice on next chapter
-- sometimes highlights word by word instead of sentences
+- Kokoro issues:
+  - bad: Kaiser Wilhelm’s - good: Kaiser Wilhelm's -- need to replace all instances of ’s with 's.. do it on the server?
 - doesn't switch to offline if started in online TTS (maybe fixed?)
 - can web app be run offline? (specifically in iOS)
-- progress completely broken?
-- navigation (next/prev sentence) broken because of structure of SMLL chunks
-  - next section works
 - error handling
-- no matching audio chunk
+  - no matching audio chunk
 - cancel download doesn't work (at least not immediately)
-- doesn't seem to continue when locking screen
 - nested chapters might not make sense in TOC?
-- trying to download TTS when offline doesn't fail
-- changing playback speed results in "no matching audio chunk found for content" (same root cause as navigation broken probably)
+- trying to download TTS when offline doesn't fail gracefully
+- partial success of download looks like complete success
 
 offline audio improvements
 
 - progress meter for download
-- custom voice
-- custom playback speed
 - better audio-text synchronization / highlight tracking
-- handle audio playback across page turns
-- persist playback position/state
-- fallback when SMLL structure doesn't match
 
 TTS issues
 

@@ -302,15 +302,21 @@ class OfflineAudioStorage {
       let request: IDBRequest;
       if (bookHash) {
         const index = store.index('bookHash');
-        request = index.getAll(bookHash);
+        request = index.openCursor(IDBKeyRange.only(bookHash));
       } else {
-        request = store.getAll();
+        request = store.openCursor();
       }
 
-      request.onsuccess = () => {
-        const records = request.result as OfflineAudioRecord[];
-        const totalSize = records.reduce((sum, record) => sum + (record.size || 0), 0);
-        resolve(totalSize);
+      let totalSize = 0;
+      request.onsuccess = (event) => {
+        const cursor = (event.target as IDBRequest).result;
+        if (cursor) {
+          const record = cursor.value as OfflineAudioRecord;
+          totalSize += record.size || 0;
+          cursor.continue();
+        } else {
+          resolve(totalSize);
+        }
       };
 
       request.onerror = () => reject(request.error);
@@ -404,38 +410,88 @@ class OfflineAudioStorage {
   /**
    * Get the voice ID downloaded for a specific section/chapter.
    * Returns null if no audio exists for this section.
+   * Optimized: Checks COMPLETION_STORE first (lightweight), avoiding heavy audio scans.
    */
   async getDownloadedVoiceForSection(bookHash: string, href: string): Promise<string | null> {
     if (!this.db) await this.init();
 
-    // Strip any existing fragment from the section href (e.g., chapter1.xhtml#id1 -> chapter1.xhtml)
+    const baseHref = href.split('#')[0] || href;
+
+    return new Promise((resolve, reject) => {
+      // First try the efficient COMPLETION_STORE check
+      const transaction = this.db!.transaction([COMPLETION_STORE], 'readonly');
+      const store = transaction.objectStore(COMPLETION_STORE);
+      // We don't have a direct index for [bookHash, href] in completion store (it uses composite ID),
+      // but we can scan the book's completions which is very small (tens of items).
+      const index = store.index('bookHash');
+      const request = index.getAll(bookHash);
+
+      request.onsuccess = () => {
+        const completions = request.result as SectionCompletion[];
+        const completion = completions.find((c) => c.href === baseHref && c.isComplete);
+        resolve(completion ? completion.voiceId : null);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  /**
+   * Get audio records for a specific section efficiently using a range query.
+   * This avoids scanning the entire book's audio.
+   */
+  async getSectionAudio(bookHash: string, href: string): Promise<OfflineAudioRecord[]> {
+    if (!this.db) await this.init();
+
     const baseHref = href.split('#')[0] || href;
 
     return new Promise((resolve, reject) => {
       const transaction = this.db!.transaction([AUDIO_STORE], 'readonly');
       const store = transaction.objectStore(AUDIO_STORE);
-      const index = store.index('bookHash');
-      const request = index.getAll(bookHash);
+      const index = store.index('bookHash_href');
+
+      // Range query: [bookHash, baseHref] -> [bookHash, baseHref + '\uffff']
+      // This matches all blocks for this section (e.g., chapter1.xhtml, chapter1.xhtml#block-0, etc.)
+      const range = IDBKeyRange.bound([bookHash, baseHref], [bookHash, baseHref + '\uffff']);
+      const request = index.getAll(range);
 
       request.onsuccess = () => {
-        const records = request.result as OfflineAudioRecord[];
-        // console.log(
-        //   '[OfflineAudioStorage] Found records:',
-        //   records.length,
-        //   'sample hrefs:',
-        //   records.slice(0, 3).map((r) => r.href),
-        // );
-        // Find any record matching this section's base href (without fragment)
-        // Audio is stored as chapter1.xhtml#block-0, chapter1.xhtml#block-1, etc.
-        const sectionRecord = records.find((r) => {
-          const recordBaseHref = r.href.split('#')[0] || r.href;
-          return recordBaseHref === baseHref;
-        });
-        // console.log(
-        //   '[OfflineAudioStorage] Match result:',
-        //   sectionRecord ? sectionRecord.voiceId : null,
-        // );
-        resolve(sectionRecord ? sectionRecord.voiceId : null);
+        resolve(request.result || []);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  /**
+   * Delete all audio chunks for a specific section efficiently.
+   * Uses key cursor to delete without loading values.
+   */
+  async deleteAudioForSection(bookHash: string, href: string, voiceId: string): Promise<void> {
+    if (!this.db) await this.init();
+
+    const baseHref = href.split('#')[0] || href;
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([AUDIO_STORE], 'readwrite');
+      const store = transaction.objectStore(AUDIO_STORE);
+      const index = store.index('bookHash_href');
+
+      // Range query to find all chunks for this section
+      const range = IDBKeyRange.bound([bookHash, baseHref], [bookHash, baseHref + '\uffff']);
+      const request = index.openKeyCursor(range);
+
+      request.onsuccess = (event) => {
+        const cursor = (event.target as IDBRequest).result;
+        if (cursor) {
+          // Verify it matches the voiceId before deleting (though usually only one voice exists)
+          // The key cursor value is the primary key (id), which is `${bookHash}:${href}:${voiceId}`
+          const id = cursor.primaryKey as string;
+          if (id.endsWith(`:${voiceId}`)) {
+            store.delete(id);
+          }
+          cursor.continue();
+        } else {
+          resolve();
+        }
       };
       request.onerror = () => reject(request.error);
     });
@@ -450,22 +506,17 @@ class OfflineAudioStorage {
     if (!this.db) await this.init();
 
     return new Promise((resolve, reject) => {
-      const transaction = this.db!.transaction([AUDIO_STORE], 'readonly');
-      const store = transaction.objectStore(AUDIO_STORE);
+      const transaction = this.db!.transaction([COMPLETION_STORE], 'readonly');
+      const store = transaction.objectStore(COMPLETION_STORE);
       const index = store.index('bookHash');
       const request = index.getAll(bookHash);
 
       request.onsuccess = () => {
-        const records = request.result as OfflineAudioRecord[];
-        const downloadedBaseHrefs = new Set<string>();
-
-        for (const record of records) {
-          // Extract base href (remove #block-* fragment)
-          const baseHref = record.href.split('#')[0] || record.href;
-          downloadedBaseHrefs.add(baseHref);
-        }
-
-        resolve(downloadedBaseHrefs);
+        const completions = request.result as SectionCompletion[];
+        // Using COMPLETION_STORE is much more efficient than AUDIO_STORE as it has
+        // only one record per section/voice rather than one record per sentence/block.
+        const downloadedHrefs = new Set(completions.filter((c) => c.isComplete).map((c) => c.href));
+        resolve(downloadedHrefs);
       };
       request.onerror = () => reject(request.error);
     });

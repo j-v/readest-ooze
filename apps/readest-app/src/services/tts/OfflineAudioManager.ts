@@ -397,14 +397,8 @@ class OfflineAudioManager extends EventTarget {
       const allSections = this.flattenTOC(toc);
       const totalSections = allSections.length;
 
-      // Check existing downloads first
-      const existingDownloads = new Set<string>();
-      for (const section of allSections) {
-        const exists = await offlineAudioStorage.hasAudio(bookHash, section.href, voiceId);
-        if (exists) {
-          existingDownloads.add(section.href);
-        }
-      }
+      // Check existing downloads first using COMPLETION_STORE (much efficient)
+      const existingDownloads = await offlineAudioStorage.getAllDownloadedSections(bookHash);
 
       // Initialize progress
       const progress: DownloadProgress = {
@@ -557,18 +551,8 @@ class OfflineAudioManager extends EventTarget {
    * Delete downloaded audio for a single section
    */
   async deleteSingleSection(bookHash: string, href: string, voiceId: string): Promise<void> {
-    // Get all audio chunks for this href (including block-0, block-1, etc.)
-    const allAudio = await offlineAudioStorage.getBookAudio(bookHash);
-    const hrefAudio = allAudio.filter(
-      (record) =>
-        record.voiceId === voiceId &&
-        (record.href === href || record.href.startsWith(`${href}#block-`)),
-    );
-
-    // Delete all chunks
-    for (const record of hrefAudio) {
-      await offlineAudioStorage.deleteAudio(bookHash, record.href, voiceId);
-    }
+    // Delete all chunks efficiently using range query
+    await offlineAudioStorage.deleteAudioForSection(bookHash, href, voiceId);
 
     // Delete completion status
     await offlineAudioStorage.deleteSectionCompletion(bookHash, href, voiceId);

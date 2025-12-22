@@ -309,7 +309,7 @@ export class TTSController extends EventTarget {
   async #speak(ssml: string | undefined | Promise<string>) {
     await this.stop();
     this.#currentSpeakAbortController = new AbortController();
-    const speakController = this.#currentSpeakAbortController;
+    const speakAbortController = this.#currentSpeakAbortController;
     const { signal } = this.#currentSpeakAbortController;
 
     // Track if we're using offline TTS for fallback handling
@@ -400,7 +400,7 @@ export class TTSController extends EventTarget {
         }
       } finally {
         // Only clean up if we are still the current controller
-        if (this.#currentSpeakAbortController === speakController) {
+        if (this.#currentSpeakAbortController === speakAbortController) {
           this.#currentSpeakAbortController.abort();
           this.#currentSpeakAbortController = null;
         }

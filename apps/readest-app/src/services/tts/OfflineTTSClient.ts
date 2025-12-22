@@ -171,7 +171,7 @@ export class OfflineTTSClient implements TTSClient {
       // Strip fragment from section href for matching (e.g., chapter1.xhtml#id1 -> chapter1.xhtml)
       const baseSectionHref = this.#sectionHref.split('#')[0] || this.#sectionHref;
 
-      const allAudio = await offlineAudioStorage.getBookAudio(this.#bookHash);
+      const allAudio = await offlineAudioStorage.getSectionAudio(this.#bookHash, this.#sectionHref);
       const sectionAudio = allAudio.filter((record) => {
         const recordBaseHref = record.href.split('#')[0] || record.href;
         return recordBaseHref === baseSectionHref && record.voiceId === this.#voiceId;
@@ -372,15 +372,17 @@ export class OfflineTTSClient implements TTSClient {
     plainText: string,
   ): Promise<OfflineAudioRecord | null> {
     try {
-      const allAudio = await offlineAudioStorage.getBookAudio(this.#bookHash);
-
-      // Filter for this section and voice
-      const sectionAudio = allAudio.filter(
-        (record) => record.href.startsWith(this.#sectionHref) && record.voiceId === this.#voiceId,
+      // Optimized: Only fetch audio for the current section
+      const sectionAudio = await offlineAudioStorage.getSectionAudio(
+        this.#bookHash,
+        this.#sectionHref,
       );
 
+      // Filter for this voice (though usually redundant if key matches)
+      const validAudio = sectionAudio.filter((record) => record.voiceId === this.#voiceId);
+
       // First try to match by content hash
-      for (const record of sectionAudio) {
+      for (const record of validAudio) {
         const recordHash = simpleHash(this.normalizeWhitespace(record.text));
         if (recordHash === contentHash) {
           return record;
@@ -390,7 +392,7 @@ export class OfflineTTSClient implements TTSClient {
       // Fallback: try to match by normalized text
       // TODO this probably won't help but maybe there are some other ideas for fallback
       const normalizedPlainText = plainText.trim().toLowerCase();
-      for (const record of sectionAudio) {
+      for (const record of validAudio) {
         const recordText = this.normalizeWhitespace(record.text).trim().toLowerCase();
         if (recordText === normalizedPlainText || recordText.includes(normalizedPlainText)) {
           return record;
@@ -400,7 +402,7 @@ export class OfflineTTSClient implements TTSClient {
       console.warn('[OfflineTTSClient] No matching audio chunk found for content:', {
         contentHash,
         textPreview: plainText.substring(0, 50),
-        availableChunks: sectionAudio.length,
+        availableChunks: validAudio.length,
       });
 
       return null;

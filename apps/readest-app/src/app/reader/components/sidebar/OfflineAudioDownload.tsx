@@ -5,7 +5,6 @@ import { RiVoiceAiFill } from 'react-icons/ri';
 import { useTranslation } from '@/hooks/useTranslation';
 import { offlineAudioManager } from '@/services/tts/OfflineAudioManager';
 import { DownloadProgress } from '@/services/tts/OfflineAudioStorage';
-import { simpleHash } from '@/services/tts/utils';
 import { TTSUtils } from '@/services/tts/TTSUtils';
 import { useReaderStore } from '@/store/readerStore';
 import { TTSVoicesGroup } from '@/services/tts';
@@ -34,16 +33,8 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
   const view = getView(bookKey);
   const viewSettings = getViewSettings(bookKey);
   const bookDoc = view?.book || null;
-  const getMetadataValue = (val: unknown) => {
-    if (typeof val === 'string') return val;
-    if (typeof val === 'object' && val !== null) return (Object.values(val)[0] as string) || '';
-    return '';
-  };
-  const identifier = bookDoc?.metadata?.identifier
-    ? getMetadataValue(bookDoc.metadata.identifier)
-    : '';
-  const title = bookDoc?.metadata?.title ? getMetadataValue(bookDoc.metadata.title) : 'unknown';
-  const bookId = bookDoc ? simpleHash(identifier || title) : '';
+  // Use stable bookId from bookKey (metaHash) to match TOCView and other components
+  const bookId = bookKey.split('-')[0]!;
 
   const loadStatus = useCallback(async () => {
     try {
