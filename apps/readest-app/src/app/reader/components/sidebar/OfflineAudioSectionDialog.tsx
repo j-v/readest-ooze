@@ -183,7 +183,7 @@ const OfflineAudioSectionDialog: React.FC<OfflineAudioSectionDialogProps> = ({
 
   return (
     <div className='modal modal-open'>
-      <div className='modal-box max-w-md'>
+      <div className='modal-box max-w-md overflow-visible'>
         {/* Header */}
         <div className='mb-4 flex items-center justify-between'>
           <h3 className='flex items-center gap-2 text-lg font-semibold'>
