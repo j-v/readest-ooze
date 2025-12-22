@@ -15,6 +15,8 @@ import { parseSSMLMarks, filterSSMLWithLang } from '@/utils/ssml';
 import { getAudioDuration, simpleHash } from './utils';
 import { generateSSMLChunksForSection } from './FoliateTTSHelper';
 import { TTSGranularity, TTSVoicesGroup } from './types';
+import { getUserLocale } from '@/utils/misc';
+// import { isLangMatch } from '@/utils/lang';
 
 export interface DownloadOptions {
   bookHash: string;
@@ -590,17 +592,25 @@ class OfflineAudioManager extends EventTarget {
    * Get available voices for offline download
    */
   async getVoices(lang: string): Promise<TTSVoicesGroup[]> {
+    // TODO these need fixing. should probably match TTSController.getVoices
+    console.log(lang);
+
+    const locale = lang === 'en' ? getUserLocale(lang) || lang : lang;
+
     // 1. Edge TTS Voices
     const edgeVoices = EdgeSpeechTTS.voices;
     const filteredEdgeVoices = edgeVoices.filter(
-      (v) => v.lang.startsWith(lang) || (lang === 'en' && ['en-US', 'en-GB'].includes(v.lang)),
+      (v) => v.lang.startsWith(locale) || (lang === 'en' && ['en-US', 'en-GB'].includes(v.lang)),
+      // (v) => isLangMatch(v.lang, lang) || (lang === 'en' && ['en-US', 'en-GB'].includes(v.lang)),
     );
     filteredEdgeVoices.sort(TTSUtils.sortVoicesFunc);
 
     // 2. Kokoro (Http) Voices
-    // Simple filter: match lang exactly or 'en'
+    // TODO guard behind feature flag
     const filteredKokoroVoices = KOKORO_VOICES.filter(
-      (v) => v.lang === lang || (lang === 'en' && v.lang === 'en'),
+      // (v) => v.lang.startsWith(locale) || (lang === 'en' && ['en-US', 'en-GB'].includes(v.lang)),
+      (v) => v.lang === lang || v.lang === lang.split('-')[0],
+      // (v) => isLangMatch(v.lang, lang) || (lang === 'en' && ['en-US', 'en-GB'].includes(v.lang)),
     );
 
     const groups: TTSVoicesGroup[] = [];

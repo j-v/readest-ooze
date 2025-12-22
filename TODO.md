@@ -2,6 +2,7 @@ next step
 
 to test
 
+- should be guarded behind feature flag (download, playback)
 - is online audio still working - YES, when started in online
 - test offline->online fallback working - NO
 

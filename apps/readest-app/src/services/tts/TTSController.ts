@@ -195,15 +195,11 @@ export class TTSController extends EventTarget {
     }
 
     // Get current section from the view's TTS state
-    let currentHref = this.view.tts?.section?.id || '';
-
-    // Fallback: try to get section from renderer if TTS state is not ready
-    if (!currentHref && this.view.renderer?.getContents) {
-      const contents = this.view.renderer.getContents();
-      const contentIndex = contents[0]?.index;
-      if (typeof contentIndex === 'number') {
-        currentHref = this.view.book?.sections?.[contentIndex]?.id || '';
-      }
+    let currentHref = '';
+    const contents = this.view.renderer.getContents();
+    const contentIndex = contents[0]?.index;
+    if (typeof contentIndex === 'number') {
+      currentHref = this.view.book?.sections?.[contentIndex]?.id || '';
     }
 
     if (!currentHref || currentHref === this.#lastSectionHref) {
@@ -508,6 +504,7 @@ export class TTSController extends EventTarget {
     if (this.ttsEdgeClient.initialized) this.ttsEdgeClient.setPrimaryLang(lang);
     if (this.ttsWebClient.initialized) this.ttsWebClient.setPrimaryLang(lang);
     if (this.ttsNativeClient?.initialized) this.ttsNativeClient?.setPrimaryLang(lang);
+    // TODO add for http client?
   }
 
   async setRate(rate: number) {

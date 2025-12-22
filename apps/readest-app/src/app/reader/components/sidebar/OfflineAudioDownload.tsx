@@ -8,6 +8,9 @@ import { DownloadProgress } from '@/services/tts/OfflineAudioStorage';
 import { TTSUtils } from '@/services/tts/TTSUtils';
 import { useReaderStore } from '@/store/readerStore';
 import { TTSVoicesGroup } from '@/services/tts';
+import { getLocale } from '@/utils/misc';
+import { useBookDataStore } from '@/store/bookDataStore';
+import { parseSSMLLang } from '@/utils/ssml';
 
 interface OfflineAudioDownloadProps {
   bookKey: string;
@@ -16,7 +19,7 @@ interface OfflineAudioDownloadProps {
 
 const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, onClose }) => {
   const _ = useTranslation();
-  const { getView, getViewSettings } = useReaderStore();
+  const { getView, getProgress, getViewSettings } = useReaderStore();
 
   const [isDownloading, setIsDownloading] = useState(false);
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
@@ -29,6 +32,8 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
   const [selectedVoiceId, setSelectedVoiceId] = useState<string>('');
   const [downloadedVoiceId, setDownloadedVoiceId] = useState<string | null>(null);
   const [showVoiceConfirm, setShowVoiceConfirm] = useState(false);
+
+  const { getBookData } = useBookDataStore();
 
   const view = getView(bookKey);
   const viewSettings = getViewSettings(bookKey);
@@ -60,12 +65,34 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
     loadStatus();
   }, [loadStatus]);
 
+  const getTTSTargetLang = useCallback((): string | null => {
+    const ttsReadAloudText = viewSettings?.ttsReadAloudText;
+    if (viewSettings?.translationEnabled && ttsReadAloudText === 'translated') {
+      return viewSettings?.translateTargetLang || getLocale();
+    } else if (viewSettings?.translationEnabled && ttsReadAloudText === 'source') {
+      const bookData = getBookData(bookKey);
+      return bookData?.book?.primaryLanguage || '';
+    }
+    return null;
+  }, [
+    bookKey,
+    getBookData,
+    viewSettings?.translationEnabled,
+    viewSettings?.ttsReadAloudText,
+    viewSettings?.translateTargetLang,
+  ]);
+
   useEffect(() => {
     const loadVoices = async () => {
-      if (!bookDoc) return;
-      const langVal = bookDoc.metadata?.language;
-      const primaryLang = typeof langVal === 'string' ? langVal : 'en';
-      const groups = await offlineAudioManager.getVoices(primaryLang);
+      if (!bookDoc || !view) return;
+
+      const bookProgress = getProgress(bookKey);
+      const range = bookProgress?.range;
+      const ssml = range ? view.tts?.from(range) : undefined;
+      const primaryLang = getBookData(bookKey)?.book?.primaryLanguage || 'en';
+      const ttsLang = ssml ? parseSSMLLang(ssml, primaryLang) || 'en' : getTTSTargetLang() || 'en';
+
+      const groups = await offlineAudioManager.getVoices(ttsLang);
       setVoiceGroups(groups);
 
       // Default selection if not already set (and no existing download)
@@ -81,7 +108,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
         if (!defaultVoice) {
           const preferredClient = TTSUtils.getPreferredClient();
           if (preferredClient) {
-            const globalVoice = TTSUtils.getPreferredVoice(preferredClient, primaryLang);
+            const globalVoice = TTSUtils.getPreferredVoice(preferredClient, ttsLang);
             if (globalVoice) {
               defaultVoice = globalVoice;
             }
@@ -102,7 +129,17 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
       }
     };
     loadVoices();
-  }, [bookDoc, downloadedVoiceId, selectedVoiceId, bookId, viewSettings?.ttsVoice]);
+  }, [
+    bookDoc,
+    view,
+    getProgress,
+    bookKey,
+    getBookData,
+    getTTSTargetLang,
+    downloadedVoiceId,
+    selectedVoiceId,
+    viewSettings?.ttsVoice,
+  ]);
 
   const startDownload = useCallback(async () => {
     if (!bookDoc) return;
@@ -249,15 +286,16 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
         </div>
         <ul className='dropdown-content menu bg-base-100 rounded-box z-[1] block max-h-60 w-full flex-nowrap overflow-y-auto p-2 shadow'>
           {voiceGroups.map(
-            (group) =>
-              (
-                <li
-                  key={group.id}
-                  className='menu-title px-2 py-1 text-xs font-bold uppercase tracking-wider opacity-50'
-                >
-                  {group.name}
-                </li>
-              ) || [] /* safeguard */,
+            (group) => (
+              // (
+              <li
+                key={group.id}
+                className='menu-title px-2 py-1 text-xs font-bold uppercase tracking-wider opacity-50'
+              >
+                {group.name}
+              </li>
+            ),
+            // ) || [] /* safeguard */,
           )}
           {voiceGroups.map((group) => (
             <React.Fragment key={group.id}>

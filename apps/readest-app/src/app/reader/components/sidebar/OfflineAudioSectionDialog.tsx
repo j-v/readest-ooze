@@ -8,6 +8,8 @@ import { useReaderStore } from '@/store/readerStore';
 import { TTSVoicesGroup } from '@/services/tts';
 import { TTSUtils } from '@/services/tts/TTSUtils';
 import { TOCItem } from '@/libs/document';
+import { parseSSMLLang } from '@/utils/ssml';
+import { useBookDataStore } from '@/store/bookDataStore';
 
 interface OfflineAudioSectionDialogProps {
   bookKey: string;
@@ -23,7 +25,8 @@ const OfflineAudioSectionDialog: React.FC<OfflineAudioSectionDialogProps> = ({
   onClose,
 }) => {
   const _ = useTranslation();
-  const { getView, getViewSettings } = useReaderStore();
+  const { getView, getProgress, getViewSettings } = useReaderStore();
+  const { getBookData } = useBookDataStore();
 
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState({ downloaded: 0, total: 0 });
@@ -67,10 +70,15 @@ const OfflineAudioSectionDialog: React.FC<OfflineAudioSectionDialogProps> = ({
   // Load voices
   useEffect(() => {
     const loadVoices = async () => {
-      if (!bookDoc) return;
-      const langVal = bookDoc.metadata?.language;
-      const primaryLang = typeof langVal === 'string' ? langVal : 'en';
-      const groups = await offlineAudioManager.getVoices(primaryLang);
+      if (!bookDoc || !view) return;
+
+      const bookProgress = getProgress(bookKey);
+      const range = bookProgress?.range;
+      const ssml = range ? view.tts?.from(range) : undefined;
+      const primaryLang = getBookData(bookKey)?.book?.primaryLanguage || 'en';
+      const ttsLang = ssml ? parseSSMLLang(ssml, primaryLang) || 'en' : primaryLang;
+
+      const groups = await offlineAudioManager.getVoices(ttsLang);
       setVoiceGroups(groups);
 
       // Set default voice if not already set
@@ -88,9 +96,10 @@ const OfflineAudioSectionDialog: React.FC<OfflineAudioSectionDialogProps> = ({
 
         // 3. Global preference
         if (!defaultVoice) {
+          // TODO preferred client might not support offline?
           const preferredClient = TTSUtils.getPreferredClient();
           if (preferredClient) {
-            const globalVoice = TTSUtils.getPreferredVoice(preferredClient, primaryLang);
+            const globalVoice = TTSUtils.getPreferredVoice(preferredClient, ttsLang);
             if (globalVoice) defaultVoice = globalVoice;
           }
         }
@@ -107,7 +116,18 @@ const OfflineAudioSectionDialog: React.FC<OfflineAudioSectionDialogProps> = ({
       }
     };
     if (isOpen) loadVoices();
-  }, [bookDoc, bookId, downloadedVoiceId, isOpen, selectedVoiceId, viewSettings?.ttsVoice]);
+  }, [
+    bookDoc,
+    view,
+    getProgress,
+    bookKey,
+    getBookData,
+    isOpen,
+    bookId,
+    downloadedVoiceId,
+    selectedVoiceId,
+    viewSettings?.ttsVoice,
+  ]);
 
   const handleDownload = useCallback(async () => {
     if (!bookDoc || !href) return;
@@ -238,6 +258,7 @@ const OfflineAudioSectionDialog: React.FC<OfflineAudioSectionDialogProps> = ({
                           if (document.activeElement instanceof HTMLElement)
                             document.activeElement.blur();
                           setSelectedVoiceId(voice.id);
+                          console.log('voice selected: ', voice.id);
                         }}
                       >
                         <span>{voice.name}</span>
