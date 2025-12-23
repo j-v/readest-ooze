@@ -601,24 +601,21 @@ class OfflineAudioManager extends EventTarget {
     const edgeVoices = EdgeSpeechTTS.voices;
     const filteredEdgeVoices = edgeVoices.filter(
       (v) => v.lang.startsWith(locale) || (lang === 'en' && ['en-US', 'en-GB'].includes(v.lang)),
-      // (v) => isLangMatch(v.lang, lang) || (lang === 'en' && ['en-US', 'en-GB'].includes(v.lang)),
     );
     filteredEdgeVoices.sort(TTSUtils.sortVoicesFunc);
 
     // 2. Kokoro (Http) Voices
-    // TODO guard behind feature flag
-    const filteredKokoroVoices = KOKORO_VOICES.filter(
-      // (v) => v.lang.startsWith(locale) || (lang === 'en' && ['en-US', 'en-GB'].includes(v.lang)),
-      (v) => v.lang === lang || v.lang === lang.split('-')[0],
-      // (v) => isLangMatch(v.lang, lang) || (lang === 'en' && ['en-US', 'en-GB'].includes(v.lang)),
-    );
+    const filteredKokoroVoices =
+      process.env['NEXT_PUBLIC_ENABLE_HTTP_TTS'] === 'true'
+        ? KOKORO_VOICES.filter((v) => v.lang === lang || v.lang === lang.split('-')[0])
+        : [];
 
     const groups: TTSVoicesGroup[] = [];
 
     if (filteredKokoroVoices.length > 0) {
       groups.push({
         id: 'http-tts',
-        name: 'Kokoro TTS', // Or "High Quality" / "Experimental"
+        name: 'Kokoro TTS',
         voices: filteredKokoroVoices,
       });
     }

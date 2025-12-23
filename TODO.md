@@ -21,16 +21,27 @@ issues with offline audio
 
 offline audio improvements
 
-- progress meter for download
+- batch chapter download
+- delete audio when deleting book
+- control to delete all audio to free up space
 - better audio-text synchronization / highlight tracking
+- add option to disable "http tts server" (prevent it hanging when the server is down)
+- TTS API to batch phrases, may improve performance
+
+refactoring
+
+- global/section download dialogs could be a single component
+- voice availability logic could be shared between OfflineAudioManager and TTSController
 
 TTS issues
 
 - text breaking in Meditations
-- Names with abbrevs as separate sentences
+- Names with abbrevs as separate sentences (note - when offline it works better because it sends the entire paragraph instead of sentence by sentence)
 - trying to start online TTS with no connection not handled gracefully
+- can get into a state where there are 2 voices reading at the same time
 
 build/deploy issues
 
 - pnpm preview/build for cloudfare requires: export NODE_OPTIONS="--max-old-space-size=8192"
 - TOO BIG FOR CLOUDFLARE. (exceeded size limit of 3MiB) Try Vercel?
+- had to add option to allow insecure connections for my home TTS server
