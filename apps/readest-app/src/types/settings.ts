@@ -80,4 +80,11 @@ export interface SystemSettings {
 
   globalReadSettings: ReadSettings;
   globalViewSettings: ViewSettings;
+
+  customTTSEndpoint: CustomTTSEndpointConfig;
+}
+
+export interface CustomTTSEndpointConfig {
+  enabled: boolean;
+  endpoint: string;
 }

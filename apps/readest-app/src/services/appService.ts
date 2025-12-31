@@ -54,6 +54,7 @@ import {
   DEFAULT_FIXED_LAYOUT_VIEW_SETTINGS,
   SETTINGS_FILENAME,
   DEFAULT_MOBILE_SYSTEM_SETTINGS,
+  DEFAULT_CUSTOM_TTS_ENDPOINT_CONFIG,
 } from './constants';
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
 import { getOSPlatform, getTargetLang, isCJKEnv, isContentURI, isValidURL } from '@/utils/misc';
@@ -213,6 +214,7 @@ export abstract class BaseAppService implements AppService {
         ...(this.isMobile ? DEFAULT_MOBILE_READSETTINGS : {}),
       },
       globalViewSettings: this.getDefaultViewSettings(),
+      customTTSEndpoint: DEFAULT_CUSTOM_TTS_ENDPOINT_CONFIG,
     } as SystemSettings;
 
     let settings = await this.safeLoadJSON<SystemSettings>(

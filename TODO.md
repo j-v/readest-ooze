@@ -2,9 +2,16 @@ next step
 
 to test
 
-- should be guarded behind feature flag (download, playback)
 - is online audio still working - YES, when started in online
 - test offline->online fallback working - NO
+
+HTTP TTS server settings
+
+- future improvements
+  - "test endpoint" button
+  - multiple endpoints
+  - configuring voices
+  - settings preserved in online account
 
 issues with offline audio
 
@@ -18,6 +25,7 @@ issues with offline audio
 - nested chapters might not make sense in TOC?
 - trying to download TTS when offline doesn't fail gracefully
 - partial success of download looks like complete success
+- download progress icon in TOC item not showing
 
 offline audio improvements
 
@@ -27,6 +35,7 @@ offline audio improvements
 - better audio-text synchronization / highlight tracking
 - add option to disable "http tts server" (prevent it hanging when the server is down)
 - TTS API to batch phrases, may improve performance
+- visual indicator to show offline audio is active
 
 refactoring
 

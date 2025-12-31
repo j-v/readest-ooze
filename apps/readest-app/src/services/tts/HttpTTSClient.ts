@@ -27,7 +27,7 @@ const hashPayload = (payload: TTSPayload): string => {
 export class HttpTTSClient implements TTSClient {
   name = 'http-tts';
   initialized = false;
-  controller?: TTSController;
+  controller: TTSController;
 
   #voices: TTSVoice[] = [];
   #primaryLang = 'en';
@@ -45,10 +45,10 @@ export class HttpTTSClient implements TTSClient {
     }
   });
 
-  constructor(controller?: TTSController) {
+  constructor(controller: TTSController, endpoint: string) {
     this.controller = controller;
     this.#provider = new HttpTTSProvider({
-      endpoint: 'http://100.71.209.91:8000/tts',
+      endpoint: endpoint,
       timeoutMs: 30000,
     });
 

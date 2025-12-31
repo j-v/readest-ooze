@@ -11,6 +11,7 @@ import { OfflineTTSClient } from './OfflineTTSClient';
 import { HttpTTSClient } from './HttpTTSClient';
 import { TTSUtils } from './TTSUtils';
 import { TTSClient } from './TTSClient';
+import { useSettingsStore } from '@/store/settingsStore';
 
 type TTSState =
   | 'stopped'
@@ -63,8 +64,10 @@ export class TTSController extends EventTarget {
       this.ttsNativeClient = new NativeTTSClient(this);
     }
     // Initialize HTTP TTS client if feature flag is enabled
-    if (process.env['NEXT_PUBLIC_ENABLE_HTTP_TTS'] === 'true') {
-      this.ttsHttpClient = new HttpTTSClient(this);
+    // Initialize HTTP TTS client if enabled in settings
+    const settings = useSettingsStore.getState().settings;
+    if (settings.customTTSEndpoint.enabled) {
+      this.ttsHttpClient = new HttpTTSClient(this, settings.customTTSEndpoint.endpoint);
     }
     this.ttsClient = this.ttsWebClient;
     this.appService = appService;

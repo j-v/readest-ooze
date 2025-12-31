@@ -16,7 +16,7 @@ import { getAudioDuration, simpleHash } from './utils';
 import { generateSSMLChunksForSection } from './FoliateTTSHelper';
 import { TTSGranularity, TTSVoicesGroup } from './types';
 import { getUserLocale } from '@/utils/misc';
-// import { isLangMatch } from '@/utils/lang';
+import { useSettingsStore } from '@/store/settingsStore';
 
 export interface DownloadOptions {
   bookHash: string;
@@ -58,18 +58,28 @@ class OfflineAudioManager extends EventTarget {
   constructor() {
     super();
     this.edgeProvider = new EdgeTTSProvider();
+
+    // Initialize with current settings
+    const endpoint = useSettingsStore.getState().settings.customTTSEndpoint?.endpoint || '';
     this.httpProvider = new HttpTTSProvider({
-      // Same config as HttpTTSClient
-      endpoint: 'http://100.71.209.91:8000/tts',
+      endpoint,
       timeoutMs: 30000,
     });
     this.provider = this.edgeProvider;
-  }
 
-  // Deprecated: setProvider is less useful now that we manage multiple internally,
-  // but kept for compatibility/testing if needed to force a specific override
-  setProvider(provider: TTSProvider) {
-    this.provider = provider;
+    let currentEndpoint = endpoint;
+    // Subscribe to settings changes to update provider
+    useSettingsStore.subscribe((state) => {
+      const newEndpoint = state.settings.customTTSEndpoint.endpoint;
+
+      if (currentEndpoint !== newEndpoint) {
+        currentEndpoint = newEndpoint;
+        this.httpProvider = new HttpTTSProvider({
+          endpoint: newEndpoint,
+          timeoutMs: 30000,
+        });
+      }
+    });
   }
 
   async init(): Promise<void> {
@@ -605,10 +615,12 @@ class OfflineAudioManager extends EventTarget {
     filteredEdgeVoices.sort(TTSUtils.sortVoicesFunc);
 
     // 2. Kokoro (Http) Voices
-    const filteredKokoroVoices =
-      process.env['NEXT_PUBLIC_ENABLE_HTTP_TTS'] === 'true'
-        ? KOKORO_VOICES.filter((v) => v.lang === lang || v.lang === lang.split('-')[0])
-        : [];
+    const settings = useSettingsStore.getState().settings;
+    const isHttpEnabled = settings.customTTSEndpoint?.enabled ?? false;
+
+    const filteredKokoroVoices = isHttpEnabled
+      ? KOKORO_VOICES.filter((v) => v.lang === lang || v.lang === lang.split('-')[0])
+      : [];
 
     const groups: TTSVoicesGroup[] = [];
 

@@ -1,7 +1,7 @@
 import TTSProvider, { SynthesizeOptions } from './TTSProvider';
 
 export interface HttpTTSProviderOptions {
-  endpoint?: string; // defaults to provided IP
+  endpoint: string;
   timeoutMs?: number;
 }
 
@@ -17,9 +17,9 @@ export class HttpTTSProvider implements TTSProvider {
   private endpoint: string;
   private timeoutMs: number | undefined;
 
-  constructor(opts?: HttpTTSProviderOptions) {
-    this.endpoint = opts?.endpoint || 'http://100.71.209.91:8000/tts';
-    this.timeoutMs = opts?.timeoutMs;
+  constructor(opts: HttpTTSProviderOptions) {
+    this.endpoint = opts.endpoint;
+    this.timeoutMs = opts.timeoutMs;
   }
 
   async init(): Promise<void> {
