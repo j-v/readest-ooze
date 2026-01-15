@@ -19,7 +19,8 @@ const LangPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterReset 
   const { token } = useAuth();
   const { envConfig } = useEnv();
   const { settings, applyUILanguage } = useSettingsStore();
-  const { getViewSettings, setViewSettings, recreateViewer } = useReaderStore();
+  const { getView, getViewSettings, setViewSettings, recreateViewer } = useReaderStore();
+  const view = getView(bookKey);
   const viewSettings = getViewSettings(bookKey) || settings.globalViewSettings;
 
   const [uiLanguage, setUILanguage] = useState(viewSettings.uiLanguage);
@@ -191,7 +192,7 @@ const LangPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterReset 
       bookKey,
       'replaceQuotationMarks',
       replaceQuotationMarks,
-      true,
+      false,
       false,
     ).then(() => {
       recreateViewer(envConfig, bookKey);
@@ -231,7 +232,7 @@ const LangPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterReset 
       bookKey,
       'convertChineseVariant',
       convertChineseVariant,
-      true,
+      false,
       false,
     ).then(() => {
       recreateViewer(envConfig, bookKey);
@@ -268,6 +269,7 @@ const LangPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterReset 
                 className='toggle'
                 checked={translationEnabled}
                 onChange={() => setTranslationEnabled(!translationEnabled)}
+                disabled={!bookKey}
               />
             </div>
 
@@ -310,6 +312,46 @@ const LangPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterReset 
           </div>
         </div>
       </div>
+
+      {(isCJKEnv() || view?.language.isCJK) && (
+        <div className='w-full'>
+          <h2 className='mb-2 font-medium'>{_('Punctuation')}</h2>
+          <div className='card border-base-200 bg-base-100 border shadow'>
+            <div className='divide-base-200'>
+              <div className='config-item !h-16'>
+                <div className='flex flex-col gap-1'>
+                  <span className=''>{_('Replace Quotation Marks')}</span>
+                  <span className='text-xs'>{_('Enabled only in vertical layout.')}</span>
+                </div>
+                <input
+                  type='checkbox'
+                  className='toggle'
+                  checked={replaceQuotationMarks}
+                  onChange={() => setReplaceQuotationMarks(!replaceQuotationMarks)}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {(isCJKEnv() || view?.language.isCJK) && (
+        <div className='w-full'>
+          <h2 className='mb-2 font-medium'>{_('Convert Simplified and Traditional Chinese')}</h2>
+          <div className='card border-base-200 bg-base-100 border shadow'>
+            <div className='divide-base-200'>
+              <div className='config-item'>
+                <span className=''>{_('Convert Mode')}</span>
+                <Select
+                  value={getConvertModeOption().value}
+                  onChange={handleSelectConvertMode}
+                  options={getConvertModeOptions()}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className='w-full'>
         <h2 className='mb-2 font-medium'>{_('Custom TTS Endpoint')}</h2>
@@ -358,46 +400,6 @@ const LangPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterReset 
           </div>
         </div>
       </div>
-
-      {isCJKEnv() && (
-        <div className='w-full'>
-          <h2 className='mb-2 font-medium'>{_('Punctuation')}</h2>
-          <div className='card border-base-200 bg-base-100 border shadow'>
-            <div className='divide-base-200'>
-              <div className='config-item !h-16'>
-                <div className='flex flex-col gap-1'>
-                  <span className=''>{_('Replace Quotation Marks')}</span>
-                  <span className='text-xs'>{_('Enabled only in vertical layout.')}</span>
-                </div>
-                <input
-                  type='checkbox'
-                  className='toggle'
-                  checked={replaceQuotationMarks}
-                  onChange={() => setReplaceQuotationMarks(!replaceQuotationMarks)}
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {isCJKEnv() && (
-        <div className='w-full'>
-          <h2 className='mb-2 font-medium'>{_('Convert Simplified and Traditional Chinese')}</h2>
-          <div className='card border-base-200 bg-base-100 border shadow'>
-            <div className='divide-base-200'>
-              <div className='config-item'>
-                <span className=''>{_('Convert Mode')}</span>
-                <Select
-                  value={getConvertModeOption().value}
-                  onChange={handleSelectConvertMode}
-                  options={getConvertModeOptions()}
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

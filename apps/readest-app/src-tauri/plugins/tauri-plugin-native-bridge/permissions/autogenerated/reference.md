@@ -14,6 +14,7 @@ Default permissions for the plugin
 - `allow-get-sys-fonts-list`
 - `allow-intercept-keys`
 - `allow-lock-screen-orientation`
+- `allow-iap-is-available`
 - `allow-iap-initialize`
 - `allow-iap-fetch-products`
 - `allow-iap-purchase-product`
@@ -26,6 +27,8 @@ Default permissions for the plugin
 - `allow-open-external-url`
 - `allow-select-directory`
 - `allow-request-manage-storage-permission`
+- `allow-register-listener`
+- `allow-remove-listener`
 - `allow-check-permissions`
 - `allow-request-permissions`
 - `allow-checkPermissions`
@@ -407,6 +410,32 @@ Denies the iap_initialize command without any pre-configured scope.
 <tr>
 <td>
 
+`native-bridge:allow-iap-is-available`
+
+</td>
+<td>
+
+Enables the iap_is_available command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`native-bridge:deny-iap-is-available`
+
+</td>
+<td>
+
+Denies the iap_is_available command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `native-bridge:allow-iap-purchase-product`
 
 </td>
@@ -556,6 +585,58 @@ Enables the open_external_url command without any pre-configured scope.
 <td>
 
 Denies the open_external_url command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`native-bridge:allow-register-listener`
+
+</td>
+<td>
+
+Enables the register_listener command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`native-bridge:deny-register-listener`
+
+</td>
+<td>
+
+Denies the register_listener command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`native-bridge:allow-remove-listener`
+
+</td>
+<td>
+
+Enables the remove_listener command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`native-bridge:deny-remove-listener`
+
+</td>
+<td>
+
+Denies the remove_listener command without any pre-configured scope.
 
 </td>
 </tr>

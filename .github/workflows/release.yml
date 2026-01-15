@@ -69,7 +69,7 @@ jobs:
               repo: context.repo.repo,
               tag_name: process.env.release_tag,
             })
-            const notes = process.env.release_note.split(/(?:\d\.\s)/).filter(Boolean);
+            const notes = process.env.release_note.split(/\d+\.\s/).filter(Boolean);
             const formattedNotes = notes.map(note => `* ${note.trim()}`).join("\n");
             const body = `## Release Highlight\n${formattedNotes}\n\n${data.body}`;
             github.rest.repos.updateRelease({
@@ -95,10 +95,12 @@ jobs:
         run: |
           version=${{ needs.get-release.outputs.release_version }}
           plugin_zip="Readest-${version}-1.koplugin.zip"
+          meta_file="apps/readest.koplugin/_meta.lua"
+          perl -i -pe "s/^}/    version = \"${version}\",\n}/" "${meta_file}"
 
-          cd apps/readest.koplugin
-          zip -r ../../${plugin_zip} .
-          cd ../..
+          cd apps
+          zip -r ../${plugin_zip} readest.koplugin
+          cd ..
 
           echo "Uploading ${plugin_zip} to GitHub release"
           gh release upload ${{ needs.get-release.outputs.release_tag }} ${plugin_zip} --clobber

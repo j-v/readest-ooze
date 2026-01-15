@@ -261,10 +261,7 @@ const getLayoutStyles = (
   a::before {
     content: '';
     position: absolute;
-    top: -10px;
-    left: -10px;
-    right: -10px;
-    bottom: -10px;
+    inset: -10px;
   }
   p, blockquote, dd, div:not(:has(*:not(b, a, em, i, strong, u, span))) {
     line-height: ${lineSpacing} ${overrideLayout ? '!important' : ''};
@@ -326,10 +323,6 @@ const getLayoutStyles = (
 
   pre {
     white-space: pre-wrap !important;
-  }
-
-  body:not([dir="rtl"]) {
-    overflow-x: clip;
   }
 
   .epubtype-footnote,
@@ -609,17 +602,42 @@ export const transformStylesheet = (vw: number, vh: number, css: string) => {
     return match;
   });
 
+  // clip nowrapped elements
+  css = css.replace(ruleRegex, (match, selector, block) => {
+    const hasWhiteSpaceNowrap = /white-space\s*:\s*nowrap\s*[;$]/.test(block);
+    if (hasWhiteSpaceNowrap) {
+      if (!/overflow\s*:/.test(block)) {
+        block = block.replace(/}$/, ' overflow: clip !important; }');
+      }
+      return selector + block;
+    }
+    return match;
+  });
+
   // Process duokan-bleed
   css = css.replace(ruleRegex, (_, selector, block) => {
     const directions = ['top', 'bottom', 'left', 'right'];
+    let hasBleed = false;
     for (const dir of directions) {
       const bleedRegex = new RegExp(`duokan-bleed\\s*:\\s*[^;]*${dir}[^;]*;`);
       const marginRegex = new RegExp(`margin-${dir}\\s*:`);
       if (bleedRegex.test(block) && !marginRegex.test(block)) {
+        hasBleed = true;
         block = block.replace(
           /}$/,
           ` margin-${dir}: calc(-1 * var(--margin-${dir})) !important; }`,
         );
+      }
+    }
+    if (hasBleed) {
+      if (!/position\s*:/.test(block)) {
+        block = block.replace(/}$/, ' position: relative !important; }');
+      }
+      if (!/overflow\s*:/.test(block)) {
+        block = block.replace(/}$/, ' overflow: hidden !important; }');
+      }
+      if (!/display\s*:/.test(block)) {
+        block = block.replace(/}$/, ' display: flow-root !important; }');
       }
     }
     return selector + block;
