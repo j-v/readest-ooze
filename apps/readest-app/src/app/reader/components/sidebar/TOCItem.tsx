@@ -2,6 +2,7 @@ import clsx from 'clsx';
 import React, { useCallback } from 'react';
 import { ListChildComponentProps } from 'react-window';
 import { MdCheckCircle, MdDownload } from 'react-icons/md';
+import { RiLoader2Line } from 'react-icons/ri';
 import { TOCItem } from '@/libs/document';
 import { getContentMd5 } from '@/utils/misc';
 import ContextMenu from '@/components/ContextMenu';
@@ -38,6 +39,7 @@ const TOCItemView = React.memo<{
   itemSize?: number;
   isActive: boolean;
   isDownloaded?: boolean;
+  isDownloading?: boolean;
   onToggleExpand: (item: TOCItem) => void;
   onItemClick: (item: TOCItem) => void;
   onOpenOfflineAudioDialog?: (item: TOCItem) => void;
@@ -47,6 +49,7 @@ const TOCItemView = React.memo<{
     itemSize,
     isActive,
     isDownloaded,
+    isDownloading,
     onToggleExpand,
     onItemClick,
     onOpenOfflineAudioDialog,
@@ -151,6 +154,9 @@ const TOCItemView = React.memo<{
               size={16}
             />
           )}
+          {isDownloading && (
+            <RiLoader2Line className='text-primary ms-2 flex-shrink-0 animate-spin' size={16} />
+          )}
           {item.location && (
             <div className='text-base-content/50 ms-auto ps-1 text-xs sm:pe-1'>
               {item.location.current + 1}
@@ -188,6 +194,7 @@ interface ListRowProps {
   itemSize?: number;
   activeHref: string | null;
   downloadedHrefs?: Set<string>;
+  downloadingHrefs?: Set<string>;
   onToggleExpand: (item: TOCItem) => void;
   onItemClick: (item: TOCItem) => void;
   onOpenOfflineAudioDialog?: (item: TOCItem) => void;
@@ -199,12 +206,14 @@ export const StaticListRow: React.FC<ListRowProps> = ({
   itemSize,
   activeHref,
   downloadedHrefs,
+  downloadingHrefs,
   onToggleExpand,
   onItemClick,
   onOpenOfflineAudioDialog,
 }) => {
   const isActive = activeHref === flatItem.item.href;
   const isDownloaded = downloadedHrefs?.has(flatItem.item.href) || false;
+  const isDownloading = downloadingHrefs?.has(flatItem.item.href) || false;
 
   return (
     <div
@@ -220,6 +229,7 @@ export const StaticListRow: React.FC<ListRowProps> = ({
         itemSize={itemSize}
         isActive={isActive}
         isDownloaded={isDownloaded}
+        isDownloading={isDownloading}
         onToggleExpand={onToggleExpand}
         onItemClick={onItemClick}
         onOpenOfflineAudioDialog={onOpenOfflineAudioDialog}
@@ -236,6 +246,7 @@ export const VirtualListRow: React.FC<
       itemSize: number;
       activeHref: string | null;
       downloadedHrefs?: Set<string>;
+      downloadingHrefs?: Set<string>;
       onToggleExpand: (item: TOCItem) => void;
       onItemClick: (item: TOCItem) => void;
       onOpenOfflineAudioDialog?: (item: TOCItem) => void;
@@ -248,6 +259,7 @@ export const VirtualListRow: React.FC<
     activeHref,
     itemSize,
     downloadedHrefs,
+    downloadingHrefs,
     onToggleExpand,
     onItemClick,
     onOpenOfflineAudioDialog,
@@ -262,6 +274,7 @@ export const VirtualListRow: React.FC<
         itemSize={itemSize - 1}
         activeHref={activeHref}
         downloadedHrefs={downloadedHrefs}
+        downloadingHrefs={downloadingHrefs}
         onToggleExpand={onToggleExpand}
         onItemClick={onItemClick}
         onOpenOfflineAudioDialog={onOpenOfflineAudioDialog}

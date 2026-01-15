@@ -352,6 +352,11 @@ class OfflineAudioManager extends EventTarget {
       }
 
       onProgress?.(0, ssmlChunks.length);
+      this.dispatchEvent(
+        new CustomEvent('section-download-start', {
+          detail: { bookHash, href },
+        }),
+      );
 
       // Download audio for each SSML chunk (block/paragraph)
       await this.downloadSectionWithFoliateTTS(
@@ -447,6 +452,11 @@ class OfflineAudioManager extends EventTarget {
           const ssmlChunks = await generateSSMLChunksForSection(bookDoc, href, granularity);
 
           if (ssmlChunks.length > 0) {
+            this.dispatchEvent(
+              new CustomEvent('section-download-start', {
+                detail: { bookHash, href },
+              }),
+            );
             await this.downloadSectionWithFoliateTTS(
               bookHash,
               href,
@@ -476,6 +486,15 @@ class OfflineAudioManager extends EventTarget {
           );
         } catch (error) {
           console.error('Error downloading section:', href, error);
+          this.dispatchEvent(
+            new CustomEvent('section-download-error', {
+              detail: {
+                bookHash,
+                href,
+                error: error instanceof Error ? error.message : String(error),
+              },
+            }),
+          );
           progress.failedSections.push(href);
           progress.lastError = error instanceof Error ? error.message : String(error);
           await offlineAudioStorage.saveProgress(progress);

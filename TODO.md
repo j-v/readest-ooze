@@ -15,17 +15,20 @@ HTTP TTS server settings
 
 issues with offline audio
 
+- cancel download doesn't work (at least not immediately)
+- delete button not working in book menu?
 - Kokoro issues:
   - bad: Kaiser Wilhelm’s - good: Kaiser Wilhelm's -- need to replace all instances of ’s with 's.. do it on the server?
-- doesn't switch to offline if started in online TTS (maybe fixed?)
+  - Reading all caps passages letter by letter (as acronyms) instead of as words - e.g. MARCUS AURELIUS ANTONINUS
+  - Roman numerals read as letters - e.g. III (should be 3, or 'the 3rd' ideally depending on context)
+- doesn't switch to offline if started in online TTS
 - can web app be run offline? (specifically in iOS)
 - error handling
   - no matching audio chunk
-- cancel download doesn't work (at least not immediately)
 - nested chapters might not make sense in TOC?
 - trying to download TTS when offline doesn't fail gracefully
 - partial success of download looks like complete success
-- download progress icon in TOC item not showing
+- when downloading section - can close dialog and download continues, but re-opening dialog shows no progress as if it was never started
 
 offline audio improvements
 
@@ -36,6 +39,7 @@ offline audio improvements
 - add option to disable "http tts server" (prevent it hanging when the server is down)
 - TTS API to batch phrases, may improve performance
 - visual indicator to show offline audio is active
+- show icon for failed download (red X?)
 
 refactoring
 

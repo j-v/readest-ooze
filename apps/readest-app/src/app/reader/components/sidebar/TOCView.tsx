@@ -55,6 +55,7 @@ const TOCView: React.FC<{
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [containerHeight, setContainerHeight] = useState(400);
   const [downloadedHrefs, setDownloadedHrefs] = useState<Set<string>>(new Set());
+  const [downloadingHrefs, setDownloadingHrefs] = useState<Set<string>>(new Set());
   const [offlineDialogItem, setOfflineDialogItem] = useState<TOCItem | null>(null);
 
   const hasInteractedWithTOCRef = useRef(false);
@@ -177,11 +178,52 @@ const TOCView: React.FC<{
     const handleDownloadUpdate = () => {
       loadDownloadedHrefs();
     };
-    offlineAudioManager.addEventListener('download-progress', handleDownloadUpdate);
-    offlineAudioManager.addEventListener('download-complete', handleDownloadUpdate);
-    offlineAudioManager.addEventListener('download-deleted', handleDownloadUpdate);
     offlineAudioManager.addEventListener('section-download-complete', handleDownloadUpdate);
     offlineAudioManager.addEventListener('section-download-deleted', handleDownloadUpdate);
+
+    const handleSectionStart = (event: Event) => {
+      const { bookHash, href } = (event as CustomEvent).detail;
+      if (bookHash === bookId) {
+        setDownloadingHrefs((prev) => {
+          const next = new Set(prev);
+          next.add(href);
+          return next;
+        });
+      }
+    };
+
+    const handleSectionEnd = (event: Event) => {
+      const { bookHash, href } = (event as CustomEvent).detail;
+      if (bookHash === bookId) {
+        setDownloadingHrefs((prev) => {
+          const next = new Set(prev);
+          next.delete(href);
+          return next;
+        });
+        loadDownloadedHrefs();
+      }
+    };
+
+    const handleBatchProgress = (event: Event) => {
+      const { bookHash, href } = (event as CustomEvent).detail;
+      if (bookHash === bookId && href) {
+        // When batch downloading, completion of one section is signaled here
+        setDownloadingHrefs((prev) => {
+          const next = new Set(prev);
+          next.delete(href);
+          return next;
+        });
+        loadDownloadedHrefs();
+      }
+    };
+
+    offlineAudioManager.addEventListener('section-download-start', handleSectionStart);
+    offlineAudioManager.addEventListener('section-download-complete', handleSectionEnd);
+    offlineAudioManager.addEventListener('section-download-error', handleSectionEnd);
+    offlineAudioManager.addEventListener('section-download-deleted', handleDownloadUpdate);
+    offlineAudioManager.addEventListener('download-progress', handleBatchProgress);
+    offlineAudioManager.addEventListener('download-complete', handleDownloadUpdate);
+    offlineAudioManager.addEventListener('download-deleted', handleDownloadUpdate);
 
     return () => {
       window.removeEventListener('resize', updateHeight);
@@ -191,11 +233,13 @@ const TOCView: React.FC<{
       if (scrollContainer) {
         scrollContainer.removeEventListener('scroll', handleInteraction);
       }
-      offlineAudioManager.removeEventListener('download-progress', handleDownloadUpdate);
+      offlineAudioManager.removeEventListener('section-download-complete', handleSectionEnd);
+      offlineAudioManager.removeEventListener('section-download-error', handleSectionEnd);
+      offlineAudioManager.removeEventListener('section-download-deleted', handleDownloadUpdate);
+      offlineAudioManager.removeEventListener('section-download-start', handleSectionStart);
+      offlineAudioManager.removeEventListener('download-progress', handleBatchProgress);
       offlineAudioManager.removeEventListener('download-complete', handleDownloadUpdate);
       offlineAudioManager.removeEventListener('download-deleted', handleDownloadUpdate);
-      offlineAudioManager.removeEventListener('section-download-complete', handleDownloadUpdate);
-      offlineAudioManager.removeEventListener('section-download-deleted', handleDownloadUpdate);
     };
     // Note: expandedItems removed from deps - checkmarks don't depend on expansion state
   }, [handleInteraction, bookId]);
@@ -287,6 +331,7 @@ const TOCView: React.FC<{
       bookKey,
       activeHref,
       downloadedHrefs,
+      downloadingHrefs,
       onToggleExpand: handleToggleExpand,
       onItemClick: handleItemClick,
       onOpenOfflineAudioDialog: handleOpenOfflineAudioDialog,
@@ -299,6 +344,7 @@ const TOCView: React.FC<{
     bookKey,
     activeHref,
     downloadedHrefs,
+    downloadingHrefs,
     handleToggleExpand,
     handleItemClick,
     handleOpenOfflineAudioDialog,
@@ -360,6 +406,7 @@ const TOCView: React.FC<{
               flatItem={flatItem}
               activeHref={activeHref}
               downloadedHrefs={downloadedHrefs}
+              downloadingHrefs={downloadingHrefs}
               onToggleExpand={handleToggleExpand}
               onItemClick={handleItemClick}
               onOpenOfflineAudioDialog={handleOpenOfflineAudioDialog}
