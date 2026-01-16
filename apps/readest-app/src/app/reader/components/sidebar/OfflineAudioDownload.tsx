@@ -108,10 +108,17 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
     };
 
     const onDownloadComplete = (event: Event) => {
-      const { bookHash } = (event as CustomEvent).detail;
+      const { bookHash, progress } = (event as CustomEvent).detail;
       if (bookHash === bookId) {
         setIsDownloading(false);
         setDownloadingHref(null);
+        setDownloadProgress(null);
+
+        // Check if there were any failed sections
+        if (progress?.failedSections && progress.failedSections.length > 0) {
+          setError('Failed to download audio, check your network connection');
+        }
+
         loadStatus();
       }
     };
@@ -134,8 +141,9 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
       if (bookHash === bookId) {
         setIsDownloading(false);
         setDownloadingHref(null);
+        setDownloadProgress(null);
         if (err !== 'Download cancelled') {
-          setError(err);
+          setError('Failed to download audio, check your network connection');
         }
         loadStatus();
       }
@@ -341,12 +349,6 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
     setDownloadingHref(null);
   };
 
-  const handleGlobalDelete = async () => {
-    if (!confirm(_('Delete all downloaded audio?'))) return;
-    await offlineAudioManager.deleteBook(bookId);
-    loadStatus();
-  };
-
   const formatSize = (bytes: number): string => {
     if (bytes === 0) return '0 B';
     const k = 1024;
@@ -386,15 +388,6 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
           <span>
             {downloadedHrefs.size} / {flatTOC.length} {_('Downloaded')} ({formatSize(totalSize)})
           </span>
-          {totalSize > 0 && (
-            <button
-              onClick={handleGlobalDelete}
-              className='text-error hover:underline'
-              disabled={isDownloading}
-            >
-              {_('Delete All')}
-            </button>
-          )}
         </div>
 
         {/* Voice Selection */}
@@ -444,7 +437,6 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
           </ul>
         </details>
       </div>
-
       {/* TOOLBAR */}
       <div className='bg-base-200/50 border-base-200 flex flex-shrink-0 gap-2 border-b px-4 py-2 text-xs'>
         <button onClick={handleSelectAll} disabled={isDownloading} className='hover:text-primary'>
@@ -463,7 +455,6 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
           {_('Missing')}
         </button>
       </div>
-
       {/* LIST */}
       <div className='flex-1 overflow-y-auto p-0'>
         <ul className='menu menu-sm w-full p-0'>
@@ -512,11 +503,8 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
           })}
         </ul>
       </div>
-
       {/* FOOTER */}
       <div className='border-base-200 flex-shrink-0 border-t p-4'>
-        {error && <div className='alert alert-error mb-2 px-2 py-1 text-xs'>{error}</div>}
-
         {/* Voice Change Confirm */}
         {showVoiceConfirm && (
           <div className='alert alert-warning mb-2 p-2 text-xs'>
@@ -563,6 +551,13 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
                 {_('Cancel')}
               </button>
             </div>
+          </div>
+        ) : error ? (
+          <div className='flex flex-col gap-2'>
+            <div className='alert alert-error px-2 py-2 text-xs'>{error}</div>
+            <button onClick={() => setError(null)} className='btn btn-primary btn-sm w-full'>
+              {_('Continue')}
+            </button>
           </div>
         ) : (
           <div className='flex gap-2'>
