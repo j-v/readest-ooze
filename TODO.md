@@ -1,6 +1,11 @@
 next step
 
+- look into https://github.com/readest/readest/pull/1858 existing PR for implementing custom TTS endpoint (OpenAI compatible)
+- need to use tauriFetch for http? and configure CSP in tauri.conf?
+
 to test
+
+-- test the cache busting fix - then make PR
 
 - is online audio still working - YES, when started in online
 - test offline->online fallback working - NO
@@ -15,6 +20,7 @@ HTTP TTS server settings
 
 issues with offline audio
 
+- I think downloading parent of nested chapter downloads all children but they don't get recognized as downloaded (Hamlet Act V)
 - cancel download doesn't work (at least not immediately)
 - delete button not working in book menu?
 - Kokoro issues:
@@ -58,3 +64,8 @@ build/deploy issues
 - pnpm preview/build for cloudfare requires: export NODE_OPTIONS="--max-old-space-size=8192"
 - TOO BIG FOR CLOUDFLARE. (exceeded size limit of 3MiB) Try Vercel?
 - had to add option to allow insecure connections for my home TTS server
+
+Github PRs,issues & discussions
+
+- https://github.com/readest/readest/pull/1858 [WIP] feat: implement OpenAI TTS client and integrate with TTS controller #1858
+- https://github.com/readest/readest/issues/258 FR: Add custom TTS engine. #258

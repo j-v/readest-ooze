@@ -45,8 +45,18 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
   const loadStatus = useCallback(async () => {
     try {
       await offlineAudioManager.init();
-      const savedProgress = await offlineAudioManager.getStatus(bookId, '');
-      setProgress(savedProgress.progress);
+      const savedStatus = await offlineAudioManager.getStatus(bookId, '');
+      if (savedStatus.inProgress) {
+        setIsDownloading(true);
+        if (savedStatus.progress) {
+          setProgress(savedStatus.progress);
+        }
+      } else {
+        // Only update progress if we're not already downloading (to avoid race conditions)
+        if (!isDownloading && savedStatus.progress) {
+          setProgress(savedStatus.progress);
+        }
+      }
 
       const size = await offlineAudioManager.getTotalSize(bookId);
       setTotalSize(size);
@@ -60,7 +70,64 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
     } catch (err) {
       console.error('Error loading offline audio status:', err);
     }
-  }, [bookId]);
+  }, [bookId, isDownloading]);
+
+  // Listen for download events
+  useEffect(() => {
+    const onDownloadProgress = (event: Event) => {
+      const { bookHash } = (event as CustomEvent).detail;
+      // Note: download-progress event details might differ from DownloadProgress object
+      // We should probably allow the manager to emit the full progress object or fetch it.
+      // But wait, the manager emits 'download-progress' with { bookHash, current, total, href }
+      // AND it calls the onProgress callback.
+      // Let's check how we can get the full progress object.
+      // Actually, for the book download, OfflineAudioManager calls onProgress with the full object.
+      // But that's only for the ACTIVE caller.
+      // We need to fetch the latest progress or listen to an event that carries it?
+      // OfflineAudioManager emits 'download-progress' which gives current/total.
+      // But we need the DownloadProgress object shape for our state.
+      // Let's look at OfflineAudioManager.ts again.
+      // It dispatches 'download-progress' with { bookHash, current, total, href }.
+      // It DOES NOT emit the full progress object in the event.
+      // Ideally we should reload status or the event should carry more data.
+      // For now, let's reload status on progress event if it matches our book.
+
+      if (bookHash === bookId) {
+        // Reloading status on every section might be okay, but maybe we can just construct a partial update
+        // or just rely on getStatus which hits the DB/memory.
+        // Let's try reloading status for now, or just setting isDownloading.
+        setIsDownloading(true);
+        loadStatus();
+      }
+    };
+
+    const onDownloadComplete = (event: Event) => {
+      const { bookHash } = (event as CustomEvent).detail;
+      if (bookHash === bookId) {
+        setIsDownloading(false);
+        loadStatus();
+      }
+    };
+
+    const onDownloadError = (event: Event) => {
+      const { bookHash, error: err } = (event as CustomEvent).detail;
+      if (bookHash === bookId) {
+        setIsDownloading(false);
+        setError(err);
+        loadStatus();
+      }
+    };
+
+    offlineAudioManager.addEventListener('download-progress', onDownloadProgress);
+    offlineAudioManager.addEventListener('download-complete', onDownloadComplete);
+    offlineAudioManager.addEventListener('download-error', onDownloadError);
+
+    return () => {
+      offlineAudioManager.removeEventListener('download-progress', onDownloadProgress);
+      offlineAudioManager.removeEventListener('download-complete', onDownloadComplete);
+      offlineAudioManager.removeEventListener('download-error', onDownloadError);
+    };
+  }, [bookId, loadStatus]);
 
   useEffect(() => {
     loadStatus();
@@ -174,7 +241,9 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
         rate,
         pitch,
         primaryLang,
-        onProgress: (p) => {
+        onProgress: (p: DownloadProgress) => {
+          // Progress is handled by event listeners now, but we can keep this for immediate local updates
+          // if we are the initiator.
           setProgress(p);
         },
         signal: controller.signal,
