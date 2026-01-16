@@ -587,6 +587,13 @@ class OfflineAudioManager extends EventTarget {
           await offlineAudioStorage.saveProgress(progress);
           onProgress?.(progress);
 
+          // Dispatch section complete event for UI updates
+          this.dispatchEvent(
+            new CustomEvent('section-download-complete', {
+              detail: { bookHash, href },
+            }),
+          );
+
           this.dispatchEvent(
             new CustomEvent('download-progress', {
               detail: {
