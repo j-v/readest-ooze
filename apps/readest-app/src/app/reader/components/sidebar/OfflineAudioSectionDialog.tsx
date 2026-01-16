@@ -8,7 +8,6 @@ import { useReaderStore } from '@/store/readerStore';
 import { TTSVoicesGroup } from '@/services/tts';
 import { TTSUtils } from '@/services/tts/TTSUtils';
 import { TOCItem } from '@/libs/document';
-import { useBookDataStore } from '@/store/bookDataStore';
 import { useBookLanguage } from '@/hooks/useBookLanguage';
 
 interface OfflineAudioSectionDialogProps {
@@ -25,8 +24,7 @@ const OfflineAudioSectionDialog: React.FC<OfflineAudioSectionDialogProps> = ({
   onClose,
 }) => {
   const _ = useTranslation();
-  const { getView, getProgress, getViewSettings } = useReaderStore();
-  const { getBookData } = useBookDataStore();
+  const { getView, getViewSettings } = useReaderStore();
   const ttsLang = useBookLanguage(bookKey);
 
   const [isDownloading, setIsDownloading] = useState(false);
@@ -65,8 +63,54 @@ const OfflineAudioSectionDialog: React.FC<OfflineAudioSectionDialogProps> = ({
   useEffect(() => {
     if (isOpen) {
       loadStatus();
+
+      // Check for existing progress
+      const progress = offlineAudioManager.getSectionProgress(bookId, href);
+      if (progress) {
+        setIsDownloading(true);
+        setDownloadProgress(progress);
+      }
     }
-  }, [isOpen, loadStatus]);
+  }, [isOpen, loadStatus, bookId, href]);
+
+  // Listen for progress updates
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const onSectionProgress = (event: Event) => {
+      const { bookHash: bId, href: h, downloaded, total } = (event as CustomEvent).detail;
+      if (bId === bookId && h === href) {
+        setIsDownloading(true);
+        setDownloadProgress({ downloaded, total });
+      }
+    };
+
+    const onSectionComplete = (event: Event) => {
+      const { bookHash: bId, href: h } = (event as CustomEvent).detail;
+      if (bId === bookId && h === href) {
+        setIsDownloading(false);
+        loadStatus();
+      }
+    };
+
+    const onSectionError = (event: Event) => {
+      const { bookHash: bId, href: h, error: err } = (event as CustomEvent).detail;
+      if (bId === bookId && h === href) {
+        setIsDownloading(false);
+        setError(err);
+      }
+    };
+
+    offlineAudioManager.addEventListener('section-download-progress', onSectionProgress);
+    offlineAudioManager.addEventListener('section-download-complete', onSectionComplete);
+    offlineAudioManager.addEventListener('section-download-error', onSectionError);
+
+    return () => {
+      offlineAudioManager.removeEventListener('section-download-progress', onSectionProgress);
+      offlineAudioManager.removeEventListener('section-download-complete', onSectionComplete);
+      offlineAudioManager.removeEventListener('section-download-error', onSectionError);
+    };
+  }, [isOpen, bookId, href, loadStatus]);
 
   // Load voices
   useEffect(() => {
@@ -114,14 +158,12 @@ const OfflineAudioSectionDialog: React.FC<OfflineAudioSectionDialogProps> = ({
   }, [
     bookDoc,
     view,
-    getProgress,
-    bookKey,
-    getBookData,
     isOpen,
     bookId,
     downloadedVoiceId,
     selectedVoiceId,
     viewSettings?.ttsVoice,
+    ttsLang,
   ]);
 
   const handleDownload = useCallback(async () => {
@@ -154,8 +196,8 @@ const OfflineAudioSectionDialog: React.FC<OfflineAudioSectionDialogProps> = ({
         rate: 1.0,
         pitch: 1.0,
         primaryLang,
-        onProgress: (downloaded, total) => {
-          setDownloadProgress({ downloaded, total });
+        onProgress: (_downloaded: number, _total: number) => {
+          // Progress is now handled via section-download-progress event
         },
         signal: controller.signal,
       });

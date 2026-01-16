@@ -54,6 +54,7 @@ class OfflineAudioManager extends EventTarget {
   private edgeProvider: EdgeTTSProvider;
   private httpProvider: HttpTTSProvider;
   private activeDownloads = new Map<string, AbortController>();
+  private activeSectionProgress = new Map<string, { downloaded: number; total: number }>();
 
   constructor() {
     super();
@@ -369,7 +370,16 @@ class OfflineAudioManager extends EventTarget {
         pitch,
         granularity,
         targetLang,
-        onProgress,
+        (downloaded, total) => {
+          const key = `${bookHash}:${href}`;
+          this.activeSectionProgress.set(key, { downloaded, total });
+          this.dispatchEvent(
+            new CustomEvent('section-download-progress', {
+              detail: { bookHash, href, downloaded, total },
+            }),
+          );
+          onProgress?.(downloaded, total);
+        },
       );
 
       onProgress?.(ssmlChunks.length, ssmlChunks.length);
@@ -379,7 +389,9 @@ class OfflineAudioManager extends EventTarget {
           detail: { bookHash, href },
         }),
       );
+      this.activeSectionProgress.delete(`${bookHash}:${href}`);
     } catch (error) {
+      this.activeSectionProgress.delete(`${bookHash}:${href}`);
       this.dispatchEvent(
         new CustomEvent('section-download-error', {
           detail: {
@@ -684,6 +696,13 @@ class OfflineAudioManager extends EventTarget {
    */
   async getAllDownloadedSections(bookHash: string): Promise<Set<string>> {
     return offlineAudioStorage.getAllDownloadedSections(bookHash);
+  }
+
+  /**
+   * Get the current progress for a section download.
+   */
+  getSectionProgress(bookHash: string, href: string) {
+    return this.activeSectionProgress.get(`${bookHash}:${href}`) || null;
   }
 }
 
