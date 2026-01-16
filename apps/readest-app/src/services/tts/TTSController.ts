@@ -312,7 +312,7 @@ export class TTSController extends EventTarget {
       ssml = filterSSMLWithLang(ssml, this.ttsTargetLang);
     }
 
-    if (this.preprocessCallback) {
+    if (this.preprocessCallback && ssml) {
       ssml = await this.preprocessCallback(ssml);
     }
 

@@ -3,7 +3,7 @@ import clsx from 'clsx';
 import { MdDownload, MdClose, MdCheckCircle, MdDelete, MdCheck } from 'react-icons/md';
 import { RiVoiceAiFill } from 'react-icons/ri';
 import { useTranslation } from '@/hooks/useTranslation';
-import { offlineAudioManager } from '@/services/tts/OfflineAudioManager';
+import { offlineAudioManager, DownloadProgress } from '@/services/tts/OfflineAudioManager';
 import { TTSUtils } from '@/services/tts/TTSUtils';
 import { useReaderStore } from '@/store/readerStore';
 import { TTSVoicesGroup } from '@/services/tts';
@@ -25,6 +25,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
   const [isDownloading, setIsDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [totalSize, setTotalSize] = useState<number>(0);
+  const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
 
   // Selection State
   const [selection, setSelection] = useState<Set<string>>(new Set());
@@ -68,6 +69,9 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
 
       const status = await offlineAudioManager.getStatus(bookId, '');
       setIsDownloading(status.inProgress);
+      if (status.inProgress && status.progress) {
+        setDownloadProgress(status.progress);
+      }
 
       const dHrefs = await offlineAudioManager.getAllDownloadedSections(bookId);
       setDownloadedHrefs(dHrefs);
@@ -88,10 +92,18 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
   // Event Listeners
   useEffect(() => {
     const onDownloadProgress = (event: Event) => {
-      const { bookHash, href } = (event as CustomEvent).detail;
+      const { bookHash, current, total, href } = (event as CustomEvent).detail;
       if (bookHash === bookId) {
         setIsDownloading(true);
         setDownloadingHref(href);
+        setDownloadProgress((prev) => ({
+          bookHash,
+          totalSections: total,
+          downloadedSections: current,
+          failedSections: prev?.failedSections || [],
+          inProgress: true,
+          startedAt: prev?.startedAt || Date.now(),
+        }));
       }
     };
 
@@ -252,6 +264,15 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
       .filter((x) => selection.has(x.item.href || '') && !downloadedHrefs.has(x.item.href || ''))
       .map((x) => x.item);
 
+    setDownloadProgress({
+      bookHash: bookId,
+      totalSections: selectedItems.length,
+      downloadedSections: 0,
+      failedSections: [],
+      inProgress: true,
+      startedAt: Date.now(),
+    });
+
     const voiceId = selectedVoiceId || 'en-US-AriaNeural';
     const langVal = bookDoc?.metadata?.language;
     const primaryLang = typeof langVal === 'string' ? langVal : 'en';
@@ -317,6 +338,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
   const handleCancel = () => {
     offlineAudioManager.cancelDownload(bookId);
     setIsDownloading(false); // optimistic update
+    setDownloadingHref(null);
   };
 
   const handleGlobalDelete = async () => {
@@ -511,13 +533,36 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
         )}
 
         {isDownloading ? (
-          <div className='flex gap-2'>
-            <div className='flex flex-1 animate-pulse items-center justify-center text-sm font-medium'>
-              {_('Processing...')}
+          <div className='flex flex-col gap-2'>
+            {downloadProgress && (
+              <div className='mb-1 flex w-full flex-col'>
+                <div className='mb-1 flex justify-between text-xs opacity-80'>
+                  <span>{_('Downloading...')}</span>
+                  <span className='font-mono'>
+                    {Math.round(
+                      (downloadProgress.downloadedSections / downloadProgress.totalSections) * 100,
+                    )}
+                    % ({downloadProgress.downloadedSections}/{downloadProgress.totalSections})
+                  </span>
+                </div>
+                <progress
+                  className='progress progress-primary w-full'
+                  value={downloadProgress.downloadedSections}
+                  max={downloadProgress.totalSections}
+                ></progress>
+              </div>
+            )}
+            {!downloadProgress && (
+              <div className='flex flex-1 animate-pulse items-center justify-center text-sm font-medium'>
+                {_('Processing...')}
+              </div>
+            )}
+
+            <div className='flex justify-end gap-2'>
+              <button onClick={handleCancel} className='btn btn-error btn-sm w-full'>
+                {_('Cancel')}
+              </button>
             </div>
-            <button onClick={handleCancel} className='btn btn-error btn-sm w-1/3'>
-              {_('Cancel')}
-            </button>
           </div>
         ) : (
           <div className='flex gap-2'>
