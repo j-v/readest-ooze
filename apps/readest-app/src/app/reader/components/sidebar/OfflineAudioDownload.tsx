@@ -542,7 +542,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
                     {Math.round(
                       (downloadProgress.downloadedSections / downloadProgress.totalSections) * 100,
                     )}
-                    % ({downloadProgress.downloadedSections}/{downloadProgress.totalSections})
+                    %
                   </span>
                 </div>
                 <progress

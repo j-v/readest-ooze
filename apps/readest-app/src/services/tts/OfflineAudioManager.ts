@@ -408,7 +408,6 @@ class OfflineAudioManager extends EventTarget {
             }),
           );
           onProgress?.(downloaded, total);
-          onProgress?.(downloaded, total);
         },
         abortController.signal,
       );
@@ -519,6 +518,8 @@ class OfflineAudioManager extends EventTarget {
       await offlineAudioStorage.saveProgress(progress);
       onProgress?.(progress);
 
+      let sectionsCompletedCount = progress.downloadedSections;
+
       // Download each section
       for (let i = 0; i < allSections.length; i++) {
         if (abortController.signal.aborted) {
@@ -533,7 +534,7 @@ class OfflineAudioManager extends EventTarget {
         try {
           // Skip if already downloaded
           if (existingDownloads.has(href)) {
-            // Already counted in initial progress, but maybe emit event for UI update?
+            // Already counted in initial progress
             continue;
           }
 
@@ -559,12 +560,29 @@ class OfflineAudioManager extends EventTarget {
               pitch,
               granularity,
               targetLang,
-              undefined,
+              (downloaded, total) => {
+                const fraction = total > 0 ? downloaded / total : 0;
+                progress.downloadedSections = sectionsCompletedCount + fraction;
+                // Emit event but don't save to DB for every chunk to avoid perf hit
+                this.dispatchEvent(
+                  new CustomEvent('download-progress', {
+                    detail: {
+                      bookHash,
+                      current: progress.downloadedSections,
+                      total: totalSections,
+                      href,
+                      label: label || href,
+                    },
+                  }),
+                );
+                onProgress?.(progress);
+              },
               abortController.signal,
             );
           }
 
-          progress.downloadedSections++;
+          sectionsCompletedCount++;
+          progress.downloadedSections = sectionsCompletedCount;
           await offlineAudioStorage.saveProgress(progress);
           onProgress?.(progress);
 
@@ -572,7 +590,7 @@ class OfflineAudioManager extends EventTarget {
             new CustomEvent('download-progress', {
               detail: {
                 bookHash,
-                current: i + 1,
+                current: progress.downloadedSections,
                 total: totalSections,
                 href,
                 label: label || href,
