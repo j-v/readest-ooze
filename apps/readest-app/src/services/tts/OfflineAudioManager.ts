@@ -688,3 +688,4 @@ class OfflineAudioManager extends EventTarget {
 }
 
 export const offlineAudioManager = new OfflineAudioManager();
+export type { DownloadProgress };
