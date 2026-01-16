@@ -18,18 +18,6 @@ import { TTSGranularity, TTSVoicesGroup } from './types';
 import { getUserLocale } from '@/utils/misc';
 import { useSettingsStore } from '@/store/settingsStore';
 
-export interface DownloadOptions {
-  bookHash: string;
-  bookDoc: BookDoc;
-  voiceId: string;
-  rate: number;
-  pitch: number;
-  primaryLang: string;
-  targetLang?: string;
-  onProgress?: (progress: DownloadProgress) => void;
-  signal?: AbortSignal;
-}
-
 export interface DownloadSectionsOptions {
   bookHash: string;
   bookDoc: BookDoc;
@@ -40,19 +28,6 @@ export interface DownloadSectionsOptions {
   primaryLang: string;
   targetLang?: string;
   onProgress?: (progress: DownloadProgress) => void;
-  signal?: AbortSignal;
-}
-
-export interface DownloadSectionOptions {
-  bookHash: string;
-  bookDoc: BookDoc;
-  tocItem: TOCItem;
-  voiceId: string;
-  rate: number;
-  pitch: number;
-  primaryLang: string;
-  targetLang?: string;
-  onProgress?: (downloaded: number, total: number) => void;
   signal?: AbortSignal;
 }
 
@@ -67,8 +42,6 @@ class OfflineAudioManager extends EventTarget {
   private edgeProvider: EdgeTTSProvider;
   private httpProvider: HttpTTSProvider;
   private activeDownloads = new Map<string, AbortController>();
-  private activeSectionProgress = new Map<string, { downloaded: number; total: number }>();
-  private activeSectionDownloads = new Map<string, AbortController>();
 
   constructor() {
     super();
@@ -157,25 +130,6 @@ class OfflineAudioManager extends EventTarget {
       reader.onerror = () => reject(reader.error);
       reader.readAsDataURL(blob);
     });
-  }
-
-  /**
-   * Flatten TOC to get all chapters/sections
-   */
-  private flattenTOC(toc: TOCItem[]): TOCItem[] {
-    const result: TOCItem[] = [];
-    const flatten = (items: TOCItem[]) => {
-      for (const item of items) {
-        if (item.href) {
-          result.push(item);
-        }
-        if (item.subitems) {
-          flatten(item.subitems);
-        }
-      }
-    };
-    flatten(toc);
-    return result;
   }
 
   /**
@@ -325,127 +279,6 @@ class OfflineAudioManager extends EventTarget {
 
     // Mark section as complete
     await offlineAudioStorage.markSectionComplete(bookHash, href, voiceId, ssmlChunks.length);
-  }
-
-  /**
-   * Download audio for a single section/chapter using Foliate TTS for SSML generation.
-   * This ensures exact parity with the online TTS highlighting.
-   */
-  async downloadSingleSection(options: DownloadSectionOptions): Promise<void> {
-    const {
-      bookHash,
-      bookDoc,
-      tocItem,
-      voiceId,
-      rate,
-      pitch,
-      primaryLang,
-      targetLang,
-      onProgress,
-      signal,
-    } = options;
-
-    const { href } = tocItem;
-    if (!href) {
-      throw new Error('TOC item has no href');
-    }
-
-    const downloadKey = `${bookHash}:${href}`;
-
-    // Create abort controller for this specific section download
-    const abortController = new AbortController();
-    this.activeSectionDownloads.set(downloadKey, abortController);
-
-    // If external signal provided, listen to it
-    if (signal) {
-      signal.addEventListener('abort', () => abortController.abort());
-    }
-
-    // Check if already fully downloaded
-    const isComplete = await offlineAudioStorage.isSectionComplete(bookHash, href, voiceId);
-    if (isComplete) {
-      onProgress?.(1, 1);
-      return;
-    }
-
-    const lang = targetLang || primaryLang;
-    const granularity: TTSGranularity = 'sentence';
-
-    try {
-      // Use Foliate TTS to generate SSML chunks (same as online TTS path)
-      const ssmlChunks = await generateSSMLChunksForSection(bookDoc, href, granularity);
-
-      if (ssmlChunks.length === 0) {
-        console.warn('[OfflineAudioManager] No SSML chunks generated for href:', href);
-        onProgress?.(1, 1);
-        return;
-      }
-
-      onProgress?.(0, ssmlChunks.length);
-      this.dispatchEvent(
-        new CustomEvent('section-download-start', {
-          detail: { bookHash, href },
-        }),
-      );
-
-      // Download audio for each SSML chunk (block/paragraph)
-      await this.downloadSectionWithFoliateTTS(
-        bookHash,
-        href,
-        ssmlChunks,
-        voiceId,
-        lang,
-        rate,
-        pitch,
-        granularity,
-        targetLang,
-        (downloaded, total) => {
-          const key = `${bookHash}:${href}`;
-          this.activeSectionProgress.set(key, { downloaded, total });
-          this.dispatchEvent(
-            new CustomEvent('section-download-progress', {
-              detail: { bookHash, href, downloaded, total },
-            }),
-          );
-          onProgress?.(downloaded, total);
-        },
-        abortController.signal,
-      );
-
-      onProgress?.(ssmlChunks.length, ssmlChunks.length);
-
-      this.dispatchEvent(
-        new CustomEvent('section-download-complete', {
-          detail: { bookHash, href },
-        }),
-      );
-      this.activeSectionDownloads.delete(downloadKey);
-    } catch (error) {
-      this.activeSectionProgress.delete(downloadKey);
-      this.activeSectionDownloads.delete(downloadKey);
-      this.dispatchEvent(
-        new CustomEvent('section-download-error', {
-          detail: {
-            bookHash,
-            href,
-            error: error instanceof Error ? error.message : String(error),
-          },
-        }),
-      );
-      throw error;
-    }
-  }
-
-  /**
-   * Cancel active section download
-   */
-  cancelSectionDownload(bookHash: string, href: string): void {
-    const key = `${bookHash}:${href}`;
-    const controller = this.activeSectionDownloads.get(key);
-    if (controller) {
-      controller.abort();
-      this.activeSectionDownloads.delete(key);
-    }
   }
 
   /**
@@ -692,30 +525,6 @@ class OfflineAudioManager extends EventTarget {
   }
 
   /**
-   * Download audio for entire book
-   */
-  async downloadBook(options: DownloadOptions): Promise<void> {
-    const { bookHash, bookDoc, voiceId, rate, pitch, primaryLang, targetLang, onProgress, signal } =
-      options;
-
-    const toc = bookDoc.toc || [];
-    const allSections = this.flattenTOC(toc);
-
-    return this.downloadSections({
-      bookHash,
-      bookDoc,
-      sections: allSections,
-      voiceId,
-      rate,
-      pitch,
-      primaryLang,
-      targetLang,
-      onProgress,
-      signal,
-    });
-  }
-
-  /**
    * Cancel active download
    */
   cancelDownload(bookHash: string): void {
@@ -745,17 +554,6 @@ class OfflineAudioManager extends EventTarget {
    */
   async deleteBook(bookHash: string): Promise<void> {
     this.cancelDownload(bookHash);
-    await offlineAudioStorage.deleteBookAudio(bookHash);
-    this.cancelDownload(bookHash);
-    // Also cancel all section downloads for this book?
-    // Retrieving all keys to filter might be expensive if many, but we can iterate.
-    Array.from(this.activeSectionDownloads.entries()).forEach(([key, controller]) => {
-      if (key.startsWith(`${bookHash}:`)) {
-        controller.abort();
-        this.activeSectionDownloads.delete(key);
-      }
-    });
-
     await offlineAudioStorage.deleteBookAudio(bookHash);
     await offlineAudioStorage.deleteProgress(bookHash);
 
@@ -886,13 +684,6 @@ class OfflineAudioManager extends EventTarget {
    */
   async getAllDownloadedSections(bookHash: string): Promise<Set<string>> {
     return offlineAudioStorage.getAllDownloadedSections(bookHash);
-  }
-
-  /**
-   * Get the current progress for a section download.
-   */
-  getSectionProgress(bookHash: string, href: string) {
-    return this.activeSectionProgress.get(`${bookHash}:${href}`) || null;
   }
 }
 

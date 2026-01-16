@@ -132,6 +132,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
           next.add(href);
           return next;
         });
+        setDownloadingHref(null);
         // If we are tracking batch progress, we might want to reload total size occasionally
       }
     };
@@ -154,6 +155,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
       if (bookHash === bookId) loadStatus();
     };
 
+    // TODO duplicate handlers?
     offlineAudioManager.addEventListener('download-progress', onDownloadProgress);
     offlineAudioManager.addEventListener('download-complete', onDownloadComplete);
     offlineAudioManager.addEventListener('download-error', onDownloadError);
@@ -288,15 +290,15 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
 
     // Note: If voice changed, we might need to delete old stuff first.
     // Existing logic in old component did this.
-    if (downloadedVoiceId && downloadedVoiceId !== selectedVoiceId) {
-      try {
-        await offlineAudioManager.deleteBook(bookId);
-        setDownloadedVoiceId(null);
-        setDownloadedHrefs(new Set());
-      } catch (e) {
-        console.error(e);
-      }
-    }
+    // if (downloadedVoiceId && downloadedVoiceId !== selectedVoiceId) {
+    //   try {
+    //     await offlineAudioManager.deleteBook(bookId);
+    //     setDownloadedVoiceId(null);
+    //     setDownloadedHrefs(new Set());
+    //   } catch (e) {
+    //     console.error(e);
+    //   }
+    // }
 
     try {
       await offlineAudioManager.init();

@@ -13,7 +13,6 @@ import { getContentMd5 } from '@/utils/misc';
 import { useTextTranslation } from '../../hooks/useTextTranslation';
 import { FlatTOCItem, StaticListRow, VirtualListRow } from './TOCItem';
 import { offlineAudioManager } from '@/services/tts/OfflineAudioManager';
-import OfflineAudioSectionDialog from './OfflineAudioSectionDialog';
 
 const getItemIdentifier = (item: TOCItem) => {
   const href = item.href || '';
@@ -56,7 +55,6 @@ const TOCView: React.FC<{
   const [containerHeight, setContainerHeight] = useState(400);
   const [downloadedHrefs, setDownloadedHrefs] = useState<Set<string>>(new Set());
   const [downloadingHrefs, setDownloadingHrefs] = useState<Set<string>>(new Set());
-  const [offlineDialogItem, setOfflineDialogItem] = useState<TOCItem | null>(null);
 
   const hasInteractedWithTOCRef = useRef(false);
   const lastInteractionTimeRef = useRef<number>(0);
@@ -180,6 +178,8 @@ const TOCView: React.FC<{
     };
     offlineAudioManager.addEventListener('section-download-complete', handleDownloadUpdate);
     offlineAudioManager.addEventListener('section-download-deleted', handleDownloadUpdate);
+    // TODO may need handler for canceling download
+    offlineAudioManager.addEventListener('section-download-error', handleDownloadUpdate); // TODO validate
 
     const handleSectionStart = (event: Event) => {
       const { bookHash, href } = (event as CustomEvent).detail;
@@ -277,15 +277,6 @@ const TOCView: React.FC<{
     [bookKey, getView],
   );
 
-  // Handler to open section offline audio dialog
-  const handleOpenOfflineAudioDialog = useCallback((item: TOCItem) => {
-    setOfflineDialogItem(item);
-  }, []);
-
-  const handleCloseOfflineAudioDialog = useCallback(() => {
-    setOfflineDialogItem(null);
-  }, []);
-
   const expandParents = useCallback((toc: TOCItem[], href: string) => {
     const parentItems = findParentPath(toc, href)
       .map((item) => getItemIdentifier(item))
@@ -334,7 +325,6 @@ const TOCView: React.FC<{
       downloadingHrefs,
       onToggleExpand: handleToggleExpand,
       onItemClick: handleItemClick,
-      onOpenOfflineAudioDialog: handleOpenOfflineAudioDialog,
     };
 
     return data;
@@ -347,7 +337,6 @@ const TOCView: React.FC<{
     downloadingHrefs,
     handleToggleExpand,
     handleItemClick,
-    handleOpenOfflineAudioDialog,
   ]);
 
   useEffect(() => {
@@ -409,18 +398,9 @@ const TOCView: React.FC<{
               downloadingHrefs={downloadingHrefs}
               onToggleExpand={handleToggleExpand}
               onItemClick={handleItemClick}
-              onOpenOfflineAudioDialog={handleOpenOfflineAudioDialog}
             />
           ))}
         </div>
-      )}
-      {offlineDialogItem && (
-        <OfflineAudioSectionDialog
-          bookKey={bookKey}
-          tocItem={offlineDialogItem}
-          isOpen={!!offlineDialogItem}
-          onClose={handleCloseOfflineAudioDialog}
-        />
       )}
     </>
   );

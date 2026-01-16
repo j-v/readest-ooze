@@ -1,5 +1,7 @@
 next step
 
+- multi select download dialog
+  - test in iOS
 - look into https://github.com/readest/readest/pull/1858 existing PR for implementing custom TTS endpoint (OpenAI compatible)
 - need to use tauriFetch for http? and configure CSP in tauri.conf?
 
@@ -20,9 +22,11 @@ HTTP TTS server settings
 
 issues with offline audio
 
+- spinner in TOC item broken - remove or fix it (needs event handling?)
+- voice management is unclear in download dialog (can change it between downloads)
 - I think downloading parent of nested chapter downloads all children but they don't get recognized as downloaded (Hamlet Act V)
-- cancel download doesn't work (at least not immediately)
-- delete button not working in book menu?
+  - actually in Hamlet -looks like parent downloads its first child, but first child needs to be repeated.
+  - no repro in lilith's brood with double nested chapters
 - Kokoro issues:
   - bad: Kaiser Wilhelm’s - good: Kaiser Wilhelm's -- need to replace all instances of ’s with 's.. do it on the server?
   - Reading all caps passages letter by letter (as acronyms) instead of as words - e.g. MARCUS AURELIUS ANTONINUS
@@ -34,10 +38,12 @@ issues with offline audio
 - nested chapters might not make sense in TOC?
 - trying to download TTS when offline doesn't fail gracefully
 - partial success of download looks like complete success
-- when downloading section - can close dialog and download continues, but re-opening dialog shows no progress as if it was never started
 
 offline audio improvements
 
+- show download progress in TOC (spinners) or at least show top level indication that download is in progress, maybe it links to the download dialog
+- multi select download dialog
+  - nice to have: spinners appear immediately for all pending downloads (not just the one that was just started)
 - batch chapter download
 - delete audio when deleting book
 - control to delete all audio to free up space
