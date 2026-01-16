@@ -30,6 +30,19 @@ export interface DownloadOptions {
   signal?: AbortSignal;
 }
 
+export interface DownloadSectionsOptions {
+  bookHash: string;
+  bookDoc: BookDoc;
+  sections: TOCItem[];
+  voiceId: string;
+  rate: number;
+  pitch: number;
+  primaryLang: string;
+  targetLang?: string;
+  onProgress?: (progress: DownloadProgress) => void;
+  signal?: AbortSignal;
+}
+
 export interface DownloadSectionOptions {
   bookHash: string;
   bookDoc: BookDoc;
@@ -439,36 +452,69 @@ class OfflineAudioManager extends EventTarget {
   /**
    * Download audio for entire book
    */
-  async downloadBook(options: DownloadOptions): Promise<void> {
-    const { bookHash, bookDoc, voiceId, rate, pitch, primaryLang, targetLang, onProgress, signal } =
-      options;
+  /**
+   * Download audio for a subset of sections
+   */
+  async downloadSections(options: DownloadSectionsOptions): Promise<void> {
+    const {
+      bookHash,
+      bookDoc,
+      sections,
+      voiceId,
+      rate,
+      pitch,
+      primaryLang,
+      targetLang,
+      onProgress,
+      signal,
+    } = options;
 
-    // Create abort controller
-    const abortController = new AbortController();
-    this.activeDownloads.set(bookHash, abortController);
+    // Create abort controller for this batch if not provided
+    // (Note: if called from downloadBook, we might want to share the controller or use the signal)
+    // We'll use the signal if provided, otherwise manage our own.
+    // However, to track in activeDownloads, we need a controller.
+    // If this is the primary operation for the book, we set it.
+    let abortController = this.activeDownloads.get(bookHash);
 
-    // Listen to external signal
+    if (!abortController) {
+      abortController = new AbortController();
+      this.activeDownloads.set(bookHash, abortController);
+    }
+
+    // If an external signal was passed, link it to the controller
     if (signal) {
-      signal.addEventListener('abort', () => abortController.abort());
+      if (signal.aborted) {
+        abortController.abort();
+      } else {
+        signal.addEventListener('abort', () => abortController?.abort());
+      }
     }
 
     try {
-      const toc = bookDoc.toc || [];
-      const allSections = this.flattenTOC(toc);
+      const allSections = sections;
       const totalSections = allSections.length;
 
       // Check existing downloads first using COMPLETION_STORE (much efficient)
       const existingDownloads = await offlineAudioStorage.getAllDownloadedSections(bookHash);
 
       // Initialize progress
+      // Note: This resets the "Book Progress" to this batch.
+      // This is acceptable as described in the plan.
       const progress: DownloadProgress = {
         bookHash,
         totalSections,
-        downloadedSections: existingDownloads.size,
+        downloadedSections: 0, // We will count pre-existing in this batch as "done" but we iterate to find them
         failedSections: [],
         inProgress: true,
         startedAt: Date.now(),
       };
+
+      // Count already downloaded in this batch for initial progress
+      for (const section of allSections) {
+        if (existingDownloads.has(section.href || '')) {
+          progress.downloadedSections++;
+        }
+      }
 
       await offlineAudioStorage.saveProgress(progress);
       onProgress?.(progress);
@@ -476,15 +522,18 @@ class OfflineAudioManager extends EventTarget {
       // Download each section
       for (let i = 0; i < allSections.length; i++) {
         if (abortController.signal.aborted) {
-          throw new Error('Download cancelled');
+          // Break the loop on abort
+          break;
         }
 
         const section = allSections[i]!;
-        const { href } = section;
+        const { href, label } = section;
+        if (!href) continue;
 
         try {
           // Skip if already downloaded
           if (existingDownloads.has(href)) {
+            // Already counted in initial progress, but maybe emit event for UI update?
             continue;
           }
 
@@ -509,7 +558,6 @@ class OfflineAudioManager extends EventTarget {
               rate,
               pitch,
               granularity,
-              granularity,
               targetLang,
               undefined,
               abortController.signal,
@@ -527,10 +575,19 @@ class OfflineAudioManager extends EventTarget {
                 current: i + 1,
                 total: totalSections,
                 href,
+                label: label || href,
               },
             }),
           );
         } catch (error) {
+          // If aborted, rethrow or break?
+          if (
+            abortController.signal.aborted ||
+            (error instanceof Error && error.message === 'Download cancelled')
+          ) {
+            throw error; // Propagate abort
+          }
+
           console.error('Error downloading section:', href, error);
           this.dispatchEvent(
             new CustomEvent('section-download-error', {
@@ -548,19 +605,39 @@ class OfflineAudioManager extends EventTarget {
         }
       }
 
-      // Mark as complete
-      progress.inProgress = false;
-      progress.completedAt = Date.now();
-      await offlineAudioStorage.saveProgress(progress);
-      onProgress?.(progress);
+      // Mark as complete if we finished (and weren't aborted)
+      if (!abortController.signal.aborted) {
+        progress.inProgress = false;
+        progress.completedAt = Date.now();
+        await offlineAudioStorage.saveProgress(progress);
+        onProgress?.(progress);
 
-      this.dispatchEvent(
-        new CustomEvent('download-complete', {
-          detail: { bookHash, progress },
-        }),
-      );
+        this.dispatchEvent(
+          new CustomEvent('download-complete', {
+            detail: { bookHash, progress },
+          }),
+        );
+      }
     } catch (error) {
       // Handle cancellation or errors
+      if (
+        abortController?.signal.aborted ||
+        (error instanceof Error && error.message === 'Download cancelled')
+      ) {
+        // Graceful exit for cancellation
+        // We don't overwrite progress with error if it was just a cancel?
+        // Maybe just ensure inProgress is false
+        const p = await offlineAudioStorage.getProgress(bookHash);
+        if (p) {
+          p.inProgress = false;
+          await offlineAudioStorage.saveProgress(p);
+          onProgress?.(p);
+        }
+        return; // Don't rethrow, just exit?
+        // Actually existing behavior rethrows, let's keep it consistent if caller expects it.
+        // But here we are the "manager".
+      }
+
       const progress = await offlineAudioStorage.getProgress(bookHash);
       if (progress) {
         progress.inProgress = false;
@@ -580,8 +657,39 @@ class OfflineAudioManager extends EventTarget {
 
       throw error;
     } finally {
-      this.activeDownloads.delete(bookHash);
+      // Cleanup only if we created it? Or if we finished?
+      // Since we set it in activeDownloads, we should clean it up.
+      // But only if we are the one who finished it.
+      // If we are just a helper, maybe not?
+      // But we are "downloadSections" now.
+      if (this.activeDownloads.get(bookHash) === abortController) {
+        this.activeDownloads.delete(bookHash);
+      }
     }
+  }
+
+  /**
+   * Download audio for entire book
+   */
+  async downloadBook(options: DownloadOptions): Promise<void> {
+    const { bookHash, bookDoc, voiceId, rate, pitch, primaryLang, targetLang, onProgress, signal } =
+      options;
+
+    const toc = bookDoc.toc || [];
+    const allSections = this.flattenTOC(toc);
+
+    return this.downloadSections({
+      bookHash,
+      bookDoc,
+      sections: allSections,
+      voiceId,
+      rate,
+      pitch,
+      primaryLang,
+      targetLang,
+      onProgress,
+      signal,
+    });
   }
 
   /**
@@ -633,6 +741,20 @@ class OfflineAudioManager extends EventTarget {
         detail: { bookHash },
       }),
     );
+  }
+
+  /**
+   * Delete downloaded audio for a single section
+   */
+  async deleteSections(bookHash: string, hrefs: string[]): Promise<void> {
+    for (const href of hrefs) {
+      // We don't know the exact voice ID here easily without querying,
+      // but deleteAudioForSection might accept wildcard or we find it.
+      const voiceId = await offlineAudioStorage.getDownloadedVoiceForSection(bookHash, href);
+      if (voiceId) {
+        await this.deleteSingleSection(bookHash, href, voiceId);
+      }
+    }
   }
 
   /**

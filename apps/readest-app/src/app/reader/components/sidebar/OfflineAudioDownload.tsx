@@ -1,16 +1,16 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
-import { MdDownload, MdClose, MdCheckCircle, MdError, MdDelete, MdCheck } from 'react-icons/md';
+import { MdDownload, MdClose, MdCheckCircle, MdDelete, MdCheck } from 'react-icons/md';
 import { RiVoiceAiFill } from 'react-icons/ri';
 import { useTranslation } from '@/hooks/useTranslation';
 import { offlineAudioManager } from '@/services/tts/OfflineAudioManager';
-import { DownloadProgress } from '@/services/tts/OfflineAudioStorage';
 import { TTSUtils } from '@/services/tts/TTSUtils';
 import { useReaderStore } from '@/store/readerStore';
 import { TTSVoicesGroup } from '@/services/tts';
 import { getLocale } from '@/utils/misc';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useBookLanguage } from '@/hooks/useBookLanguage';
+import { TOCItem } from '@/libs/document';
 
 interface OfflineAudioDownloadProps {
   bookKey: string;
@@ -19,12 +19,17 @@ interface OfflineAudioDownloadProps {
 
 const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, onClose }) => {
   const _ = useTranslation();
-  const { getView, getProgress, getViewSettings } = useReaderStore();
+  const { getView, getViewSettings } = useReaderStore();
+  const { getBookData } = useBookDataStore();
 
   const [isDownloading, setIsDownloading] = useState(false);
-  const [progress, setProgress] = useState<DownloadProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [totalSize, setTotalSize] = useState<number>(0);
+
+  // Selection State
+  const [selection, setSelection] = useState<Set<string>>(new Set());
+  const [downloadedHrefs, setDownloadedHrefs] = useState<Set<string>>(new Set());
+  const [downloadingHref, setDownloadingHref] = useState<string | null>(null);
 
   // Voice selection state
   const [voiceGroups, setVoiceGroups] = useState<TTSVoicesGroup[]>([]);
@@ -32,35 +37,44 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
   const [downloadedVoiceId, setDownloadedVoiceId] = useState<string | null>(null);
   const [showVoiceConfirm, setShowVoiceConfirm] = useState(false);
 
-  const { getBookData } = useBookDataStore();
-
   const view = getView(bookKey);
   const viewSettings = getViewSettings(bookKey);
   const bookDoc = view?.book || null;
-  // Use stable bookId from bookKey (metaHash) to match TOCView and other components
   const bookId = bookKey.split('-')[0]!;
   const ttsLang = useBookLanguage(bookKey);
 
+  // Flatten TOC for checklist
+  const flatTOC = useMemo(() => {
+    if (!bookDoc?.toc) return [];
+    const flatten = (items: TOCItem[], depth = 0): { item: TOCItem; depth: number }[] => {
+      const result: { item: TOCItem; depth: number }[] = [];
+      for (const item of items) {
+        if (item.href) {
+          result.push({ item, depth });
+        }
+        if (item.subitems) {
+          result.push(...flatten(item.subitems, depth + 1));
+        }
+      }
+      return result;
+    };
+    return flatten(bookDoc.toc);
+  }, [bookDoc]);
+
+  // Load Status
   const loadStatus = useCallback(async () => {
     try {
       await offlineAudioManager.init();
-      const savedStatus = await offlineAudioManager.getStatus(bookId, '');
-      if (savedStatus.inProgress) {
-        setIsDownloading(true);
-        if (savedStatus.progress) {
-          setProgress(savedStatus.progress);
-        }
-      } else {
-        // Only update progress if we're not already downloading (to avoid race conditions)
-        if (!isDownloading && savedStatus.progress) {
-          setProgress(savedStatus.progress);
-        }
-      }
+
+      const status = await offlineAudioManager.getStatus(bookId, '');
+      setIsDownloading(status.inProgress);
+
+      const dHrefs = await offlineAudioManager.getAllDownloadedSections(bookId);
+      setDownloadedHrefs(dHrefs);
 
       const size = await offlineAudioManager.getTotalSize(bookId);
       setTotalSize(size);
 
-      // Check for existing downloaded voice
       const dVoiceId = await offlineAudioManager.getDownloadedVoice(bookId);
       setDownloadedVoiceId(dVoiceId);
       if (dVoiceId) {
@@ -69,34 +83,15 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
     } catch (err) {
       console.error('Error loading offline audio status:', err);
     }
-  }, [bookId, isDownloading]);
+  }, [bookId]);
 
-  // Listen for download events
+  // Event Listeners
   useEffect(() => {
     const onDownloadProgress = (event: Event) => {
-      const { bookHash } = (event as CustomEvent).detail;
-      // Note: download-progress event details might differ from DownloadProgress object
-      // We should probably allow the manager to emit the full progress object or fetch it.
-      // But wait, the manager emits 'download-progress' with { bookHash, current, total, href }
-      // AND it calls the onProgress callback.
-      // Let's check how we can get the full progress object.
-      // Actually, for the book download, OfflineAudioManager calls onProgress with the full object.
-      // But that's only for the ACTIVE caller.
-      // We need to fetch the latest progress or listen to an event that carries it?
-      // OfflineAudioManager emits 'download-progress' which gives current/total.
-      // But we need the DownloadProgress object shape for our state.
-      // Let's look at OfflineAudioManager.ts again.
-      // It dispatches 'download-progress' with { bookHash, current, total, href }.
-      // It DOES NOT emit the full progress object in the event.
-      // Ideally we should reload status or the event should carry more data.
-      // For now, let's reload status on progress event if it matches our book.
-
+      const { bookHash, href } = (event as CustomEvent).detail;
       if (bookHash === bookId) {
-        // Reloading status on every section might be okay, but maybe we can just construct a partial update
-        // or just rely on getStatus which hits the DB/memory.
-        // Let's try reloading status for now, or just setting isDownloading.
         setIsDownloading(true);
-        loadStatus();
+        setDownloadingHref(href);
       }
     };
 
@@ -104,7 +99,21 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
       const { bookHash } = (event as CustomEvent).detail;
       if (bookHash === bookId) {
         setIsDownloading(false);
+        setDownloadingHref(null);
         loadStatus();
+      }
+    };
+
+    // Also listen for single section completions to update checkmarks immediately
+    const onSectionComplete = (event: Event) => {
+      const { bookHash, href } = (event as CustomEvent).detail;
+      if (bookHash === bookId) {
+        setDownloadedHrefs((prev) => {
+          const next = new Set(prev);
+          next.add(href);
+          return next;
+        });
+        // If we are tracking batch progress, we might want to reload total size occasionally
       }
     };
 
@@ -112,19 +121,33 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
       const { bookHash, error: err } = (event as CustomEvent).detail;
       if (bookHash === bookId) {
         setIsDownloading(false);
-        setError(err);
+        setDownloadingHref(null);
+        if (err !== 'Download cancelled') {
+          setError(err);
+        }
         loadStatus();
       }
+    };
+
+    const onDeleted = (event: Event) => {
+      const { bookHash } = (event as CustomEvent).detail;
+      if (bookHash === bookId) loadStatus();
     };
 
     offlineAudioManager.addEventListener('download-progress', onDownloadProgress);
     offlineAudioManager.addEventListener('download-complete', onDownloadComplete);
     offlineAudioManager.addEventListener('download-error', onDownloadError);
+    offlineAudioManager.addEventListener('section-download-complete', onSectionComplete);
+    offlineAudioManager.addEventListener('download-deleted', onDeleted);
+    offlineAudioManager.addEventListener('section-download-deleted', onDeleted); // Handle section deletes
 
     return () => {
       offlineAudioManager.removeEventListener('download-progress', onDownloadProgress);
       offlineAudioManager.removeEventListener('download-complete', onDownloadComplete);
       offlineAudioManager.removeEventListener('download-error', onDownloadError);
+      offlineAudioManager.removeEventListener('section-download-complete', onSectionComplete);
+      offlineAudioManager.removeEventListener('download-deleted', onDeleted);
+      offlineAudioManager.removeEventListener('section-download-deleted', onDeleted);
     };
   }, [bookId, loadStatus]);
 
@@ -132,7 +155,65 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
     loadStatus();
   }, [loadStatus]);
 
-  const getTTSTargetLang = useCallback((): string | null => {
+  // Voice Loading
+  useEffect(() => {
+    const loadVoices = async () => {
+      if (!bookDoc || !view) return;
+      const groups = await offlineAudioManager.getVoices(ttsLang);
+      setVoiceGroups(groups);
+
+      if (!selectedVoiceId && !downloadedVoiceId) {
+        let defaultVoice = '';
+        if (viewSettings?.ttsVoice) defaultVoice = viewSettings.ttsVoice;
+        if (!defaultVoice) {
+          const preferredClient = TTSUtils.getPreferredClient();
+          if (preferredClient) {
+            const globalVoice = TTSUtils.getPreferredVoice(preferredClient, ttsLang);
+            if (globalVoice) defaultVoice = globalVoice;
+          }
+        }
+        if (!defaultVoice) {
+          defaultVoice =
+            groups.find((g) => g.id === 'http-tts')?.voices[0]?.id ||
+            groups[0]?.voices[0]?.id ||
+            'en-US-AriaNeural';
+        }
+        if (defaultVoice) setSelectedVoiceId(defaultVoice);
+      }
+    };
+    loadVoices();
+  }, [bookDoc, view, bookKey, downloadedVoiceId, selectedVoiceId, viewSettings?.ttsVoice, ttsLang]);
+
+  // Actions
+  const handleToggleSelection = (href: string) => {
+    if (isDownloading) return;
+    setSelection((prev) => {
+      const next = new Set(prev);
+      if (next.has(href)) next.delete(href);
+      else next.add(href);
+      return next;
+    });
+  };
+
+  const handleSelectAll = () => {
+    if (isDownloading) return;
+    setSelection(new Set(flatTOC.map((x) => x.item.href || '')));
+  };
+
+  const handleSelectNone = () => {
+    if (isDownloading) return;
+    setSelection(new Set());
+  };
+
+  const handleSelectMissing = () => {
+    if (isDownloading) return;
+    const missing = flatTOC
+      .filter((x) => !downloadedHrefs.has(x.item.href || ''))
+      .map((x) => x.item.href || '');
+    setSelection(new Set(missing));
+  };
+
+  const getTTSTargetLang = useCallback((): string | undefined => {
     const ttsReadAloudText = viewSettings?.ttsReadAloudText;
     if (viewSettings?.translationEnabled && ttsReadAloudText === 'translated') {
       return viewSettings?.translateTargetLang || getLocale();
@@ -140,7 +221,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
       const bookData = getBookData(bookKey);
       return bookData?.book?.primaryLanguage || '';
     }
-    return null;
+    return undefined;
   }, [
     bookKey,
     getBookData,
@@ -149,115 +230,57 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
     viewSettings?.translateTargetLang,
   ]);
 
-  useEffect(() => {
-    const loadVoices = async () => {
-      if (!bookDoc || !view) return;
+  const handleDownloadSelected = async () => {
+    if (!bookDoc || isDownloading) return;
 
-      const groups = await offlineAudioManager.getVoices(ttsLang);
-      setVoiceGroups(groups);
-
-      // Default selection if not already set (and no existing download)
-      if (!selectedVoiceId && !downloadedVoiceId) {
-        let defaultVoice = '';
-
-        // 1. Check for active online voice (viewSettings)
-        if (viewSettings?.ttsVoice) {
-          defaultVoice = viewSettings.ttsVoice;
-        }
-
-        // 2. Check for global preference
-        if (!defaultVoice) {
-          const preferredClient = TTSUtils.getPreferredClient();
-          if (preferredClient) {
-            const globalVoice = TTSUtils.getPreferredVoice(preferredClient, ttsLang);
-            if (globalVoice) {
-              defaultVoice = globalVoice;
-            }
-          }
-        }
-
-        // 4. Smart Default (Kokoro or Edge)
-        if (!defaultVoice) {
-          defaultVoice =
-            groups.find((g) => g.id === 'http-tts')?.voices[0]?.id ||
-            groups[0]?.voices[0]?.id ||
-            'en-US-AriaNeural';
-        }
-
-        if (defaultVoice) {
-          setSelectedVoiceId(defaultVoice);
-        }
-      }
-    };
-    loadVoices();
-  }, [
-    bookDoc,
-    view,
-    getProgress,
-    bookKey,
-    getBookData,
-    getTTSTargetLang,
-    downloadedVoiceId,
-    selectedVoiceId,
-    viewSettings?.ttsVoice,
-  ]);
-
-  const startDownload = useCallback(async () => {
-    if (!bookDoc) return;
-
-    setIsDownloading(true);
-    setError(null);
-    setShowVoiceConfirm(false);
-
-    // If changing voice, delete old one first
-    if (downloadedVoiceId && downloadedVoiceId !== selectedVoiceId) {
-      try {
-        await offlineAudioManager.deleteBook(bookId);
-        setDownloadedVoiceId(null);
-      } catch (e) {
-        console.error('Error deleting old audio:', e);
-        // proceed anyway?
-      }
+    // Check voice
+    if (downloadedVoiceId && selectedVoiceId && downloadedVoiceId !== selectedVoiceId) {
+      setShowVoiceConfirm(true);
+      return;
     }
 
-    // If changing voice, delete old one first
+    startDownloadBatch();
+  };
+
+  const startDownloadBatch = async () => {
+    setError(null);
+    setIsDownloading(true);
+    setShowVoiceConfirm(false);
+
+    // Filter selection to TOC Items
+    const selectedItems = flatTOC
+      .filter((x) => selection.has(x.item.href || '') && !downloadedHrefs.has(x.item.href || ''))
+      .map((x) => x.item);
+
+    const voiceId = selectedVoiceId || 'en-US-AriaNeural';
+    const langVal = bookDoc?.metadata?.language;
+    const primaryLang = typeof langVal === 'string' ? langVal : 'en';
+    const targetLang = getTTSTargetLang();
+
+    // Note: If voice changed, we might need to delete old stuff first.
+    // Existing logic in old component did this.
     if (downloadedVoiceId && downloadedVoiceId !== selectedVoiceId) {
       try {
         await offlineAudioManager.deleteBook(bookId);
         setDownloadedVoiceId(null);
+        setDownloadedHrefs(new Set());
       } catch (e) {
-        console.error('Error deleting old audio:', e);
-        // proceed anyway?
+        console.error(e);
       }
     }
 
     try {
       await offlineAudioManager.init();
-
-      // Get TTS settings (you might need to adjust these based on your actual settings)
-      const voiceId = selectedVoiceId || 'en-US-AriaNeural'; // Default voice
-      const rate = 1.0;
-      const pitch = 1.0;
-      const langVal = bookDoc.metadata?.language;
-      const primaryLang = typeof langVal === 'string' ? langVal : 'en';
-
-      await offlineAudioManager.downloadBook({
+      await offlineAudioManager.downloadSections({
         bookHash: bookId,
-        bookDoc,
+        bookDoc: bookDoc!,
+        sections: selectedItems,
         voiceId,
-        rate,
-        pitch,
+        rate: 1.0,
+        pitch: 1.0,
         primaryLang,
-        onProgress: (p: DownloadProgress) => {
-          // Progress is handled by event listeners now, but we can keep this for immediate local updates
-          // if we are the initiator.
-          setProgress(p);
-        },
+        targetLang,
       });
-
-      // Update total size after download
-      const size = await offlineAudioManager.getTotalSize(bookId);
-      setTotalSize(size);
       setDownloadedVoiceId(voiceId);
     } catch (err) {
       if (err instanceof Error && err.message !== 'Download cancelled') {
@@ -265,39 +288,42 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
       }
     } finally {
       setIsDownloading(false);
+      loadStatus();
     }
-  }, [bookDoc, bookId, selectedVoiceId, downloadedVoiceId]);
+  };
 
-  const handleDownload = useCallback(async () => {
-    if (!bookDoc) {
-      setError('Book not loaded');
-      return;
-    }
+  const handleDeleteSelected = async () => {
+    if (isDownloading) return;
+    const toDelete = Array.from(selection).filter((href) => downloadedHrefs.has(href));
+    if (toDelete.length === 0) return;
 
-    // Check for voice mismatch
-    if (downloadedVoiceId && selectedVoiceId && downloadedVoiceId !== selectedVoiceId) {
-      setShowVoiceConfirm(true);
-      return;
-    }
-
-    startDownload();
-  }, [bookDoc, downloadedVoiceId, selectedVoiceId, startDownload]);
-
-  const handleCancel = useCallback(() => {
-    offlineAudioManager.cancelDownload(bookId);
-  }, [bookId]);
-
-  const handleDelete = useCallback(async () => {
+    setIsDownloading(true); // Lock UI
     try {
-      await offlineAudioManager.deleteBook(bookId);
-      setProgress(null);
-      setTotalSize(0);
-      setDownloadedVoiceId(null);
-      setError(null);
+      await offlineAudioManager.deleteSections(bookId, toDelete);
+      // Manually update local state for speed, though event listener will also fire
+      setDownloadedHrefs((prev) => {
+        const next = new Set(prev);
+        toDelete.forEach((h) => next.delete(h));
+        return next;
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Delete failed');
+    } finally {
+      setIsDownloading(false);
+      loadStatus();
     }
-  }, [bookId]);
+  };
+
+  const handleCancel = () => {
+    offlineAudioManager.cancelDownload(bookId);
+    setIsDownloading(false); // optimistic update
+  };
+
+  const handleGlobalDelete = async () => {
+    if (!confirm(_('Delete all downloaded audio?'))) return;
+    await offlineAudioManager.deleteBook(bookId);
+    loadStatus();
+  };
 
   const formatSize = (bytes: number): string => {
     if (bytes === 0) return '0 B';
@@ -307,200 +333,212 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
     return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`;
   };
 
-  const getProgressPercentage = (): number => {
-    if (!progress || progress.totalSections === 0) return 0;
-    return Math.round((progress.downloadedSections / progress.totalSections) * 100);
-  };
-
   const voiceDropdownRef = useRef<HTMLDetailsElement>(null);
 
-  const hasDownloads = progress !== null;
-  const isComplete = progress
-    ? progress.downloadedSections === progress.totalSections && !progress.inProgress
-    : false;
-  const isPartiallyDownloaded = hasDownloads && !isComplete;
+  // Computed states for buttons
+  const isSelectionEmpty = selection.size === 0;
+  const hasMissingInSelection = Array.from(selection).some((h) => !downloadedHrefs.has(h));
+  const hasDownloadedInSelection = Array.from(selection).some((h) => downloadedHrefs.has(h));
+
+  const downloadCount = Array.from(selection).filter((h) => !downloadedHrefs.has(h)).length;
+  const deleteCount = Array.from(selection).filter((h) => downloadedHrefs.has(h)).length;
 
   return (
-    <div className='bg-base-100 border-base-200 max-w-md rounded-lg border p-4 shadow-lg'>
-      <div className='mb-4 flex items-center justify-between'>
-        <h3 className='flex items-center gap-2 text-lg font-semibold'>
-          <MdDownload className='text-xl' />
-          {_('Offline Audio')}
-        </h3>
-        {onClose && (
-          <button onClick={onClose} className='btn btn-sm btn-ghost btn-circle'>
-            <MdClose className='text-xl' />
-          </button>
-        )}
-      </div>
-
-      {/* Voice Selection */}
-      <details ref={voiceDropdownRef} className='dropdown dropdown-bottom mb-4 w-full'>
-        <summary
-          className={clsx(
-            'btn btn-outline w-full justify-between',
-            (isDownloading || isPartiallyDownloaded) && 'btn-disabled',
-          )}
-        >
-          <div className='flex items-center gap-2'>
-            <RiVoiceAiFill className='text-xl' />
-            <span className='truncate'>
-              {voiceGroups.flatMap((g) => g.voices).find((v) => v.id === selectedVoiceId)?.name ||
-                _('Select Voice')}
-            </span>
-          </div>
-          <MdDownload className='rotate-90 text-xs' />
-        </summary>
-        <ul className='dropdown-content menu bg-base-100 rounded-box z-[1] block max-h-60 w-full flex-nowrap overflow-y-auto p-2 shadow'>
-          {voiceGroups.map((group) => (
-            <React.Fragment key={group.id}>
-              <li className='menu-title border-base-200 mt-2 border-b px-2 py-1 text-xs font-bold uppercase tracking-wider opacity-50 first:mt-0'>
-                {group.name}
-              </li>
-              {group.voices.map((voice) => (
-                <li key={voice.id}>
-                  <button
-                    type='button'
-                    className={clsx(
-                      'flex w-full items-center justify-between text-left',
-                      selectedVoiceId === voice.id && 'active',
-                    )}
-                    onClick={() => {
-                      if (document.activeElement instanceof HTMLElement)
-                        document.activeElement.blur();
-                      setSelectedVoiceId(voice.id);
-                      // Close the dropdown
-                      if (voiceDropdownRef.current) {
-                        voiceDropdownRef.current.removeAttribute('open');
-                      }
-                    }}
-                  >
-                    <span>{voice.name}</span>
-                    {selectedVoiceId === voice.id && <MdCheck />}
-                  </button>
-                </li>
-              ))}
-            </React.Fragment>
-          ))}
-        </ul>
-      </details>
-
-      {/* Delete Confirmation Modal/Overlay (Inline) */}
-      {showVoiceConfirm && (
-        <div className='alert alert-warning mb-4'>
-          <div>
-            <h3 className='font-bold'>{_('Change Voice?')}</h3>
-            <div className='text-xs'>
-              {_('This will delete existing offline audio for this book.')}
-            </div>
-          </div>
-          <div className='flex flex-col gap-2'>
-            <button onClick={startDownload} className='btn btn-sm btn-error'>
-              {_('Delete & Download')}
-            </button>
-            <button onClick={() => setShowVoiceConfirm(false)} className='btn btn-sm btn-ghost'>
-              {_('Cancel')}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Status */}
-      <div className='space-y-3'>
-        {/* Download button */}
-        {!isComplete && !isDownloading && (
-          <button
-            onClick={handleDownload}
-            className='btn btn-primary btn-block'
-            disabled={!bookDoc}
-          >
+    <div className='bg-base-100 border-base-200 flex h-[80vh] max-h-[600px] w-full max-w-md flex-col rounded-lg border shadow-lg'>
+      {/* HEADER */}
+      <div className='border-base-200 flex-shrink-0 border-b p-4 pb-2'>
+        <div className='mb-2 flex items-center justify-between'>
+          <h3 className='flex items-center gap-2 text-lg font-semibold'>
             <MdDownload className='text-xl' />
-            {hasDownloads ? _('Resume Download') : _('Download for Offline Listening')}
-          </button>
+            {_('Offline Audio')}
+          </h3>
+          {onClose && (
+            <button onClick={onClose} className='btn btn-sm btn-ghost btn-circle'>
+              <MdClose className='text-xl' />
+            </button>
+          )}
+        </div>
+
+        {/* Stats & Tools */}
+        <div className='mb-2 flex items-center justify-between text-xs opacity-70'>
+          <span>
+            {downloadedHrefs.size} / {flatTOC.length} {_('Downloaded')} ({formatSize(totalSize)})
+          </span>
+          {totalSize > 0 && (
+            <button
+              onClick={handleGlobalDelete}
+              className='text-error hover:underline'
+              disabled={isDownloading}
+            >
+              {_('Delete All')}
+            </button>
+          )}
+        </div>
+
+        {/* Voice Selection */}
+        <details ref={voiceDropdownRef} className='dropdown dropdown-bottom w-full'>
+          <summary
+            className={clsx(
+              'btn btn-sm btn-outline w-full justify-between',
+              isDownloading && 'btn-disabled',
+            )}
+          >
+            <div className='flex items-center gap-2'>
+              <RiVoiceAiFill />
+              <span className='truncate'>
+                {voiceGroups.flatMap((g) => g.voices).find((v) => v.id === selectedVoiceId)?.name ||
+                  _('Select Voice')}
+              </span>
+            </div>
+            <MdDownload className='rotate-90 text-xs' />
+          </summary>
+          {/* ... Dropdown content (same as before) ... */}
+          <ul className='dropdown-content menu bg-base-100 rounded-box z-[1] block max-h-60 w-full flex-nowrap overflow-y-auto p-2 shadow'>
+            {voiceGroups.map((group) => (
+              <React.Fragment key={group.id}>
+                <li className='menu-title border-base-200 mt-2 border-b px-2 py-1 text-xs font-bold uppercase tracking-wider opacity-50 first:mt-0'>
+                  {group.name}
+                </li>
+                {group.voices.map((voice) => (
+                  <li key={voice.id}>
+                    <button
+                      type='button'
+                      className={clsx(
+                        'flex w-full items-center justify-between text-left',
+                        selectedVoiceId === voice.id && 'active',
+                      )}
+                      onClick={() => {
+                        setSelectedVoiceId(voice.id);
+                        voiceDropdownRef.current?.removeAttribute('open');
+                      }}
+                    >
+                      <span>{voice.name}</span>
+                      {selectedVoiceId === voice.id && <MdCheck />}
+                    </button>
+                  </li>
+                ))}
+              </React.Fragment>
+            ))}
+          </ul>
+        </details>
+      </div>
+
+      {/* TOOLBAR */}
+      <div className='bg-base-200/50 border-base-200 flex flex-shrink-0 gap-2 border-b px-4 py-2 text-xs'>
+        <button onClick={handleSelectAll} disabled={isDownloading} className='hover:text-primary'>
+          {_('Select All')}
+        </button>
+        <div className='divider divider-horizontal mx-0'></div>
+        <button onClick={handleSelectNone} disabled={isDownloading} className='hover:text-primary'>
+          {_('None')}
+        </button>
+        <div className='divider divider-horizontal mx-0'></div>
+        <button
+          onClick={handleSelectMissing}
+          disabled={isDownloading}
+          className='hover:text-primary'
+        >
+          {_('Missing')}
+        </button>
+      </div>
+
+      {/* LIST */}
+      <div className='flex-1 overflow-y-auto p-0'>
+        <ul className='menu menu-sm w-full p-0'>
+          {flatTOC.map(({ item, depth }) => {
+            const href = item.href || '';
+            const isDownloaded = downloadedHrefs.has(href);
+            const isSelected = selection.has(href);
+            const isActive = downloadingHref === href;
+
+            return (
+              <li key={href}>
+                <label
+                  className={clsx(
+                    'flex h-auto cursor-pointer items-center justify-between rounded-none py-3 pr-4',
+                    isSelected && 'bg-base-200',
+                  )}
+                >
+                  <div className='flex items-center gap-3 overflow-hidden'>
+                    {/* Checkbox */}
+                    <input
+                      type='checkbox'
+                      className='checkbox checkbox-sm checkbox-primary'
+                      checked={isSelected}
+                      onChange={() => handleToggleSelection(href)}
+                      disabled={isDownloading}
+                    />
+
+                    <span className='truncate' style={{ paddingLeft: `${depth * 12}px` }}>
+                      {item.label || href}
+                    </span>
+                  </div>
+
+                  {/* Status Icon */}
+                  <div className='flex-shrink-0'>
+                    {isActive ? (
+                      <span className='loading loading-spinner loading-xs text-primary'></span>
+                    ) : isDownloaded ? (
+                      <MdCheckCircle className='text-success text-lg' />
+                    ) : (
+                      <div className='border-base-300 h-4 w-4 rounded-full border-2'></div>
+                    )}
+                  </div>
+                </label>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+
+      {/* FOOTER */}
+      <div className='border-base-200 flex-shrink-0 border-t p-4'>
+        {error && <div className='alert alert-error mb-2 px-2 py-1 text-xs'>{error}</div>}
+
+        {/* Voice Change Confirm */}
+        {showVoiceConfirm && (
+          <div className='alert alert-warning mb-2 p-2 text-xs'>
+            <span>{_('Changing voice will delete existing audio.')}</span>
+            <div className='mt-1 flex gap-2'>
+              <button onClick={startDownloadBatch} className='btn btn-xs btn-error'>
+                {_('Proceed')}
+              </button>
+              <button onClick={() => setShowVoiceConfirm(false)} className='btn btn-xs btn-ghost'>
+                {_('Cancel')}
+              </button>
+            </div>
+          </div>
         )}
 
-        {/* Progress */}
-        {isDownloading && progress && (
-          <div className='space-y-2'>
-            <div className='flex items-center justify-between text-sm'>
-              <span>
-                {_('Downloading')}... {progress.downloadedSections} / {progress.totalSections}
-              </span>
-              <span>{getProgressPercentage()}%</span>
+        {isDownloading ? (
+          <div className='flex gap-2'>
+            <div className='flex flex-1 animate-pulse items-center justify-center text-sm font-medium'>
+              {_('Processing...')}
             </div>
-            <progress
-              className='progress progress-primary w-full'
-              value={getProgressPercentage()}
-              max={100}
-            />
-            <button onClick={handleCancel} className='btn btn-sm btn-error btn-block'>
-              <MdClose />
+            <button onClick={handleCancel} className='btn btn-error btn-sm w-1/3'>
               {_('Cancel')}
             </button>
           </div>
-        )}
-
-        {/* Complete */}
-        {isComplete && (
-          <div className='alert alert-success'>
-            <MdCheckCircle className='text-xl' />
-            <span>
-              {_('Download Complete')} - {progress?.downloadedSections} {_('sections')}
-            </span>
+        ) : (
+          <div className='flex gap-2'>
+            <button
+              onClick={handleDownloadSelected}
+              disabled={isSelectionEmpty || !hasMissingInSelection}
+              className='btn btn-primary btn-sm flex-1'
+            >
+              <MdDownload />
+              {_('Download')} ({downloadCount})
+            </button>
+            <button
+              onClick={handleDeleteSelected}
+              disabled={isSelectionEmpty || !hasDownloadedInSelection}
+              className='btn btn-outline btn-error btn-sm w-1/3'
+            >
+              <MdDelete />
+              {_('Delete')} ({deleteCount})
+            </button>
           </div>
         )}
-
-        {/* Partial download */}
-        {hasDownloads && !isComplete && !isDownloading && (
-          <div className='alert alert-info'>
-            <MdCheckCircle className='text-xl' />
-            <span>
-              {progress!.downloadedSections} / {progress!.totalSections} {_('sections downloaded')}
-            </span>
-          </div>
-        )}
-
-        {/* Error */}
-        {error && (
-          <div className='alert alert-error'>
-            <MdError className='text-xl' />
-            <span>{error}</span>
-          </div>
-        )}
-
-        {/* Failed sections */}
-        {progress && progress.failedSections.length > 0 && (
-          <div className='alert alert-warning'>
-            <MdError className='text-xl' />
-            <span>
-              {progress.failedSections.length} {_('sections failed to download')}
-            </span>
-          </div>
-        )}
-
-        {/* Storage info */}
-        {totalSize > 0 && (
-          <div className='text-base-content/70 text-sm'>
-            {_('Storage used')}: {formatSize(totalSize)}
-          </div>
-        )}
-
-        {/* Delete button */}
-        {hasDownloads && (
-          <button
-            onClick={handleDelete}
-            className='btn btn-sm btn-error btn-block'
-            disabled={isDownloading}
-          >
-            <MdDelete />
-            {_('Delete Downloaded Audio')}
-          </button>
-        )}
-      </div>
-
-      {/* Info */}
-      <div className='text-base-content/60 mt-4 text-xs'>
-        {_('Download audio for all chapters to listen offline.')}
       </div>
     </div>
   );
