@@ -561,6 +561,7 @@ class OfflineAudioManager extends EventTarget {
               granularity,
               targetLang,
               (downloaded, total) => {
+                if (abortController.signal.aborted) return;
                 const fraction = total > 0 ? downloaded / total : 0;
                 progress.downloadedSections = sectionsCompletedCount + fraction;
                 // Emit event but don't save to DB for every chunk to avoid perf hit
@@ -643,17 +644,14 @@ class OfflineAudioManager extends EventTarget {
         (error instanceof Error && error.message === 'Download cancelled')
       ) {
         // Graceful exit for cancellation
-        // We don't overwrite progress with error if it was just a cancel?
-        // Maybe just ensure inProgress is false
+        // We ensure inProgress is false
         const p = await offlineAudioStorage.getProgress(bookHash);
         if (p) {
           p.inProgress = false;
           await offlineAudioStorage.saveProgress(p);
           onProgress?.(p);
         }
-        return; // Don't rethrow, just exit?
-        // Actually existing behavior rethrows, let's keep it consistent if caller expects it.
-        // But here we are the "manager".
+        // FALLTHROUGH: we still want to dispatch download-error so UI cleans up
       }
 
       const progress = await offlineAudioStorage.getProgress(bookHash);
