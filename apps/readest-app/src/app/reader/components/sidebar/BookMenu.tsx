@@ -165,6 +165,8 @@ const BookMenu: React.FC<BookMenuProps> = ({
         </>
       )}
       <hr className='border-base-200 my-1' />
+      <MenuItem label={_('Proofread')} onClick={showProofreadRulesWindow} />
+      <hr className='border-base-200 my-1' />
       <MenuItem label={_('Export Annotations')} onClick={handleExportAnnotations} />
       <MenuItem
         label={_('Sort TOC by Page')}
