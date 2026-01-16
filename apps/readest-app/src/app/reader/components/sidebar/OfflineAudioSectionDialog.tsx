@@ -30,7 +30,6 @@ const OfflineAudioSectionDialog: React.FC<OfflineAudioSectionDialogProps> = ({
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState({ downloaded: 0, total: 0 });
   const [error, setError] = useState<string | null>(null);
-  const [abortController, setAbortController] = useState<AbortController | null>(null);
 
   const [voiceGroups, setVoiceGroups] = useState<TTSVoicesGroup[]>([]);
   const [selectedVoiceId, setSelectedVoiceId] = useState<string>('');
@@ -173,8 +172,8 @@ const OfflineAudioSectionDialog: React.FC<OfflineAudioSectionDialogProps> = ({
     setError(null);
     setDownloadProgress({ downloaded: 0, total: 0 });
 
-    const controller = new AbortController();
-    setAbortController(controller);
+    setError(null);
+    setDownloadProgress({ downloaded: 0, total: 0 });
 
     try {
       await offlineAudioManager.init();
@@ -199,7 +198,6 @@ const OfflineAudioSectionDialog: React.FC<OfflineAudioSectionDialogProps> = ({
         onProgress: (_downloaded: number, _total: number) => {
           // Progress is now handled via section-download-progress event
         },
-        signal: controller.signal,
       });
 
       setDownloadedVoiceId(voiceId);
@@ -209,15 +207,14 @@ const OfflineAudioSectionDialog: React.FC<OfflineAudioSectionDialogProps> = ({
       }
     } finally {
       setIsDownloading(false);
-      setAbortController(null);
     }
   }, [bookDoc, bookId, href, selectedVoiceId, tocItem]);
 
   const handleCancel = useCallback(() => {
-    if (abortController) {
-      abortController.abort();
+    if (href) {
+      offlineAudioManager.cancelSectionDownload(bookId, href);
     }
-  }, [abortController]);
+  }, [bookId, href]);
 
   const handleDelete = useCallback(async () => {
     if (!href || !downloadedVoiceId) return;

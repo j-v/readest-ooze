@@ -25,7 +25,6 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [totalSize, setTotalSize] = useState<number>(0);
-  const [abortController, setAbortController] = useState<AbortController | null>(null);
 
   // Voice selection state
   const [voiceGroups, setVoiceGroups] = useState<TTSVoicesGroup[]>([]);
@@ -221,8 +220,16 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
       }
     }
 
-    const controller = new AbortController();
-    setAbortController(controller);
+    // If changing voice, delete old one first
+    if (downloadedVoiceId && downloadedVoiceId !== selectedVoiceId) {
+      try {
+        await offlineAudioManager.deleteBook(bookId);
+        setDownloadedVoiceId(null);
+      } catch (e) {
+        console.error('Error deleting old audio:', e);
+        // proceed anyway?
+      }
+    }
 
     try {
       await offlineAudioManager.init();
@@ -246,7 +253,6 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
           // if we are the initiator.
           setProgress(p);
         },
-        signal: controller.signal,
       });
 
       // Update total size after download
@@ -259,7 +265,6 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
       }
     } finally {
       setIsDownloading(false);
-      setAbortController(null);
     }
   }, [bookDoc, bookId, selectedVoiceId, downloadedVoiceId]);
 
@@ -279,10 +284,8 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
   }, [bookDoc, downloadedVoiceId, selectedVoiceId, startDownload]);
 
   const handleCancel = useCallback(() => {
-    if (abortController) {
-      abortController.abort();
-    }
-  }, [abortController]);
+    offlineAudioManager.cancelDownload(bookId);
+  }, [bookId]);
 
   const handleDelete = useCallback(async () => {
     try {

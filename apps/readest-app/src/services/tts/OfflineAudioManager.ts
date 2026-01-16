@@ -55,6 +55,7 @@ class OfflineAudioManager extends EventTarget {
   private httpProvider: HttpTTSProvider;
   private activeDownloads = new Map<string, AbortController>();
   private activeSectionProgress = new Map<string, { downloaded: number; total: number }>();
+  private activeSectionDownloads = new Map<string, AbortController>();
 
   constructor() {
     super();
@@ -179,12 +180,16 @@ class OfflineAudioManager extends EventTarget {
     granularity: TTSGranularity,
     targetLang?: string,
     onProgress?: (downloaded: number, total: number) => void,
+    signal?: AbortSignal,
   ): Promise<void> {
     const allMarkMetadata: MarkTimingInfo[] = [];
     let cumulativeAudioOffset = 0;
     let totalPlainText = '';
 
     for (let chunkIndex = 0; chunkIndex < ssmlChunks.length; chunkIndex++) {
+      if (signal?.aborted) {
+        throw new Error('Download cancelled');
+      }
       const chunk = ssmlChunks[chunkIndex]!;
       const { ssml: rawSSML, blockIndex } = chunk;
 
@@ -324,12 +329,23 @@ class OfflineAudioManager extends EventTarget {
       primaryLang,
       targetLang,
       onProgress,
-      signal: _signal,
+      signal,
     } = options;
 
     const { href } = tocItem;
     if (!href) {
       throw new Error('TOC item has no href');
+    }
+
+    const downloadKey = `${bookHash}:${href}`;
+
+    // Create abort controller for this specific section download
+    const abortController = new AbortController();
+    this.activeSectionDownloads.set(downloadKey, abortController);
+
+    // If external signal provided, listen to it
+    if (signal) {
+      signal.addEventListener('abort', () => abortController.abort());
     }
 
     // Check if already fully downloaded
@@ -379,7 +395,9 @@ class OfflineAudioManager extends EventTarget {
             }),
           );
           onProgress?.(downloaded, total);
+          onProgress?.(downloaded, total);
         },
+        abortController.signal,
       );
 
       onProgress?.(ssmlChunks.length, ssmlChunks.length);
@@ -389,9 +407,10 @@ class OfflineAudioManager extends EventTarget {
           detail: { bookHash, href },
         }),
       );
-      this.activeSectionProgress.delete(`${bookHash}:${href}`);
+      this.activeSectionDownloads.delete(downloadKey);
     } catch (error) {
-      this.activeSectionProgress.delete(`${bookHash}:${href}`);
+      this.activeSectionProgress.delete(downloadKey);
+      this.activeSectionDownloads.delete(downloadKey);
       this.dispatchEvent(
         new CustomEvent('section-download-error', {
           detail: {
@@ -402,6 +421,18 @@ class OfflineAudioManager extends EventTarget {
         }),
       );
       throw error;
+    }
+  }
+
+  /**
+   * Cancel active section download
+   */
+  cancelSectionDownload(bookHash: string, href: string): void {
+    const key = `${bookHash}:${href}`;
+    const controller = this.activeSectionDownloads.get(key);
+    if (controller) {
+      controller.abort();
+      this.activeSectionDownloads.delete(key);
     }
   }
 
@@ -478,7 +509,10 @@ class OfflineAudioManager extends EventTarget {
               rate,
               pitch,
               granularity,
+              granularity,
               targetLang,
+              undefined,
+              abortController.signal,
             );
           }
 
@@ -580,6 +614,17 @@ class OfflineAudioManager extends EventTarget {
    */
   async deleteBook(bookHash: string): Promise<void> {
     this.cancelDownload(bookHash);
+    await offlineAudioStorage.deleteBookAudio(bookHash);
+    this.cancelDownload(bookHash);
+    // Also cancel all section downloads for this book?
+    // Retrieving all keys to filter might be expensive if many, but we can iterate.
+    Array.from(this.activeSectionDownloads.entries()).forEach(([key, controller]) => {
+      if (key.startsWith(`${bookHash}:`)) {
+        controller.abort();
+        this.activeSectionDownloads.delete(key);
+      }
+    });
+
     await offlineAudioStorage.deleteBookAudio(bookHash);
     await offlineAudioStorage.deleteProgress(bookHash);
 
