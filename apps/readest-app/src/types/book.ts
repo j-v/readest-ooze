@@ -1,7 +1,18 @@
 import { BookMetadata } from '@/libs/document';
 import { TTSHighlightOptions } from '@/services/tts/types';
+import { AnnotationToolType } from './annotator';
 
-export type BookFormat = 'EPUB' | 'PDF' | 'MOBI' | 'AZW' | 'AZW3' | 'CBZ' | 'FB2' | 'FBZ';
+export type BookFormat =
+  | 'EPUB'
+  | 'PDF'
+  | 'MOBI'
+  | 'AZW'
+  | 'AZW3'
+  | 'CBZ'
+  | 'FB2'
+  | 'FBZ'
+  | 'TXT'
+  | 'MD';
 export type BookNoteType = 'bookmark' | 'annotation' | 'excerpt';
 export type HighlightStyle = 'highlight' | 'underline' | 'squiggly';
 export type HighlightColor = 'red' | 'yellow' | 'green' | 'blue' | 'violet';
@@ -184,9 +195,11 @@ export interface ViewConfig {
   showRemainingTime: boolean;
   showRemainingPages: boolean;
   showProgressInfo: boolean;
+  tapToToggleFooter: boolean;
   showBarsOnScroll: boolean;
   showMarginsOnScroll: boolean;
   progressStyle: 'percentage' | 'fraction';
+  progressInfoMode: 'remaining' | 'progress' | 'all' | 'none';
 }
 
 export interface TTSConfig {
@@ -205,8 +218,35 @@ export interface TranslatorConfig {
   ttsReadAloudText: string;
 }
 
+export interface AnnotatorConfig {
+  enableAnnotationQuickActions: boolean;
+  annotationQuickAction: AnnotationToolType | null;
+  copyToNotebook: boolean;
+}
+
 export interface ScreenConfig {
   screenOrientation: 'auto' | 'portrait' | 'landscape';
+}
+
+export type ProofreadScope = 'selection' | 'book' | 'library';
+
+export interface ProofreadRule {
+  id: string;
+  scope: ProofreadScope;
+  pattern: string;
+  replacement: string;
+  cfi?: string;
+  sectionHref?: string;
+  enabled: boolean;
+  isRegex: boolean;
+  order: number; // Lower numbers apply first
+  wholeWord?: boolean; // Match whole words only (uses \b word boundaries)
+  caseSensitive?: boolean; // Case-sensitive matching (default true)
+  onlyForTTS?: boolean; // Only replace text for TTS, not in the book display (only for book/library scope)
+}
+
+export interface ProofreadRulesConfig {
+  proofreadRules?: ProofreadRule[];
 }
 
 export interface ViewSettings
@@ -217,7 +257,9 @@ export interface ViewSettings
     ViewConfig,
     TTSConfig,
     TranslatorConfig,
-    ScreenConfig {}
+    ScreenConfig,
+    ProofreadRulesConfig,
+    AnnotatorConfig {}
 
 export interface BookProgress {
   location: string;
@@ -238,6 +280,9 @@ export interface BookSearchConfig {
   index?: number;
   query?: string;
   acceptNode?: (node: Node) => number;
+
+  // pre-cached search results
+  results?: BookSearchResult[] | BookSearchMatch[] | null;
 }
 
 export interface SearchExcerpt {
@@ -252,6 +297,7 @@ export interface BookSearchMatch {
 }
 
 export interface BookSearchResult {
+  index?: number;
   label: string;
   subitems: BookSearchMatch[];
   progress?: number;

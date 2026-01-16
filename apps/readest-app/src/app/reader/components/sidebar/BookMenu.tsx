@@ -4,6 +4,7 @@ import Image from 'next/image';
 
 import { MdCheck, MdDownload } from 'react-icons/md';
 import { setAboutDialogVisible } from '@/components/AboutWindow';
+import { useEnv } from '@/context/EnvContext';
 import { useReaderStore } from '@/store/readerStore';
 import { useLibraryStore } from '@/store/libraryStore';
 import { useSidebarStore } from '@/store/sidebarStore';
@@ -12,9 +13,10 @@ import { useSettingsStore } from '@/store/settingsStore';
 import { useParallelViewStore } from '@/store/parallelViewStore';
 import { isWebAppPlatform } from '@/services/environment';
 import { eventDispatcher } from '@/utils/event';
+import { FIXED_LAYOUT_FORMATS } from '@/types/book';
 import { DOWNLOAD_READEST_URL } from '@/services/constants';
 import { setKOSyncSettingsWindowVisible } from '@/app/reader/components/KOSyncSettings';
-import { FIXED_LAYOUT_FORMATS } from '@/types/book';
+import { setProofreadRulesVisibility } from '@/app/reader/components/ProofreadRules';
 import useBooksManager from '../../hooks/useBooksManager';
 import MenuItem from '@/components/MenuItem';
 import Menu from '@/components/Menu';
@@ -25,10 +27,15 @@ interface BookMenuProps {
   onShowOfflineAudio?: () => void;
 }
 
-const BookMenu: React.FC<BookMenuProps> = ({ menuClassName, setIsDropdownOpen, onShowOfflineAudio }) => {
+const BookMenu: React.FC<BookMenuProps> = ({
+  menuClassName,
+  setIsDropdownOpen,
+  onShowOfflineAudio,
+}) => {
   const _ = useTranslation();
+  const { envConfig } = useEnv();
   const { settings } = useSettingsStore();
-  const { bookKeys, getViewSettings, setViewSettings } = useReaderStore();
+  const { bookKeys, recreateViewer, getViewSettings, setViewSettings } = useReaderStore();
   const { getVisibleLibrary } = useLibraryStore();
   const { openParallelView } = useBooksManager();
   const { sideBarBookKey } = useSidebarStore();
@@ -64,8 +71,8 @@ const BookMenu: React.FC<BookMenuProps> = ({ menuClassName, setIsDropdownOpen, o
       const viewSettings = getViewSettings(sideBarBookKey)!;
       viewSettings.sortedTOC = !isSortedTOC;
       setViewSettings(sideBarBookKey, viewSettings);
+      recreateViewer(envConfig, sideBarBookKey);
     }
-    setTimeout(() => window.location.reload(), 100);
   };
   const handleSetParallel = () => {
     setParallel(bookKeys);
@@ -77,6 +84,10 @@ const BookMenu: React.FC<BookMenuProps> = ({ menuClassName, setIsDropdownOpen, o
   };
   const showKoSyncSettingsWindow = () => {
     setKOSyncSettingsWindowVisible(true);
+    setIsDropdownOpen?.(false);
+  };
+  const showProofreadRulesWindow = () => {
+    setProofreadRulesVisibility(true);
     setIsDropdownOpen?.(false);
   };
   const handlePullKOSync = () => {
@@ -93,85 +104,79 @@ const BookMenu: React.FC<BookMenuProps> = ({ menuClassName, setIsDropdownOpen, o
   };
 
   return (
-    <>
-      <Menu
-        className={clsx('book-menu dropdown-content border-base-100 z-20 shadow-2xl', menuClassName)}
-        onCancel={() => setIsDropdownOpen?.(false)}
+    <Menu
+      className={clsx('book-menu dropdown-content z-20 shadow-2xl', menuClassName)}
+      onCancel={() => setIsDropdownOpen?.(false)}
+    >
+      <MenuItem
+        label={_('Parallel Read')}
+        buttonClass={bookKeys.length > 1 ? 'lg:tooltip lg:tooltip-bottom' : ''}
+        tooltip={parallelViews.length > 0 ? _('Disable') : bookKeys.length > 1 ? _('Enable') : ''}
+        Icon={parallelViews.length > 0 && bookKeys.length > 1 ? MdCheck : undefined}
+        onClick={
+          parallelViews.length > 0
+            ? handleUnsetParallel
+            : bookKeys.length > 1
+              ? handleSetParallel
+              : undefined
+        }
       >
-        <MenuItem
-          label={_('Parallel Read')}
-          buttonClass={bookKeys.length > 1 ? 'lg:tooltip lg:tooltip-bottom' : ''}
-          tooltip={parallelViews.length > 0 ? _('Disable') : bookKeys.length > 1 ? _('Enable') : ''}
-          Icon={parallelViews.length > 0 && bookKeys.length > 1 ? MdCheck : undefined}
-          onClick={
-            parallelViews.length > 0
-              ? handleUnsetParallel
-              : bookKeys.length > 1
-                ? handleSetParallel
-                : undefined
-          }
-        >
-          <ul className='max-h-60 overflow-y-auto'>
-            {getVisibleLibrary()
-              .filter((book) => !FIXED_LAYOUT_FORMATS.has(book.format))
-              .filter((book) => !!book.downloadedAt)
-              .slice(0, 20)
-              .map((book) => (
-                <MenuItem
-                  key={book.hash}
-                  Icon={
-                    <Image
-                      src={book.coverImageUrl!}
-                      alt={book.title}
-                      width={56}
-                      height={80}
-                      className='aspect-auto max-h-8 max-w-4 rounded-sm shadow-md'
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).style.display = 'none';
-                      }}
-                    />
-                  }
-                  label={book.title}
-                  labelClass='max-w-36'
-                  onClick={() => handleParallelView(book.hash)}
-                />
-              ))}
-          </ul>
-        </MenuItem>
-        {bookKeys.length > 1 &&
-          (parallelViews.length > 0 ? (
-            <MenuItem label={_('Exit Parallel Read')} onClick={handleUnsetParallel} />
-          ) : (
-            <MenuItem label={_('Enter Parallel Read')} onClick={handleSetParallel} />
-          ))}
-        <hr className='border-base-200 my-1' />
-        <MenuItem 
-          label={_('Offline Audio')} 
-          Icon={MdDownload}
-          onClick={handleShowOfflineAudio} 
-        />
-        <hr className='border-base-200 my-1' />
-        <MenuItem label={_('KOReader Sync')} onClick={showKoSyncSettingsWindow} />
-        {settings.kosync.enabled && (
-          <>
-            <MenuItem label={_('Push Progress')} onClick={handlePushKOSync} />
-            <MenuItem label={_('Pull Progress')} onClick={handlePullKOSync} />
-          </>
-        )}
-        <hr className='border-base-200 my-1' />
-        <MenuItem label={_('Export Annotations')} onClick={handleExportAnnotations} />
-        <MenuItem
-          label={_('Sort TOC by Page')}
-          Icon={isSortedTOC ? MdCheck : undefined}
-          onClick={handleToggleSortTOC}
-        />
-        <MenuItem label={_('Reload Page')} shortcut='Shift+R' onClick={handleReloadPage} />
-        <hr className='border-base-200 my-1' />
-        {isWebAppPlatform() && <MenuItem label={_('Download Readest')} onClick={downloadReadest} />}
-        <MenuItem label={_('About Readest')} onClick={showAboutReadest} />
-      </Menu>
-    </>
+        <ul className='max-h-60 overflow-y-auto'>
+          {getVisibleLibrary()
+            .filter((book) => !FIXED_LAYOUT_FORMATS.has(book.format))
+            .filter((book) => !!book.downloadedAt)
+            .slice(0, 20)
+            .map((book) => (
+              <MenuItem
+                key={book.hash}
+                Icon={
+                  <Image
+                    src={book.coverImageUrl!}
+                    alt={book.title}
+                    width={56}
+                    height={80}
+                    className='aspect-auto max-h-8 max-w-4 rounded-sm shadow-md'
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).style.display = 'none';
+                    }}
+                  />
+                }
+                label={book.title}
+                labelClass='max-w-36'
+                onClick={() => handleParallelView(book.hash)}
+              />
+            ))}
+        </ul>
+      </MenuItem>
+      {bookKeys.length > 1 &&
+        (parallelViews.length > 0 ? (
+          <MenuItem label={_('Exit Parallel Read')} onClick={handleUnsetParallel} />
+        ) : (
+          <MenuItem label={_('Enter Parallel Read')} onClick={handleSetParallel} />
+        ))}
+      <hr className='border-base-200 my-1' />
+      <MenuItem label={_('Offline Audio')} Icon={MdDownload} onClick={handleShowOfflineAudio} />
+      <hr className='border-base-200 my-1' />
+      <MenuItem label={_('KOReader Sync')} onClick={showKoSyncSettingsWindow} />
+      {settings.kosync.enabled && (
+        <>
+          <MenuItem label={_('Push Progress')} onClick={handlePushKOSync} />
+          <MenuItem label={_('Pull Progress')} onClick={handlePullKOSync} />
+        </>
+      )}
+      <hr className='border-base-200 my-1' />
+      <MenuItem label={_('Export Annotations')} onClick={handleExportAnnotations} />
+      <MenuItem
+        label={_('Sort TOC by Page')}
+        Icon={isSortedTOC ? MdCheck : undefined}
+        onClick={handleToggleSortTOC}
+      />
+      <MenuItem label={_('Reload Page')} shortcut='Shift+R' onClick={handleReloadPage} />
+      <hr className='border-base-200 my-1' />
+      {isWebAppPlatform() && <MenuItem label={_('Download Readest')} onClick={downloadReadest} />}
+      <MenuItem label={_('About Readest')} onClick={showAboutReadest} />
+    </Menu>
   );
-};    
+};
 
 export default BookMenu;

@@ -1,4 +1,5 @@
 import {
+  AnnotatorConfig,
   BookFont,
   BookLanguage,
   BookLayout,
@@ -216,6 +217,12 @@ export const DEFAULT_FIXED_LAYOUT_VIEW_SETTINGS: Partial<ViewSettings> = {
   overrideColor: false,
 };
 
+export const DEFAULT_EINK_VIEW_SETTINGS: Partial<ViewSettings> = {
+  isEink: true,
+  animated: false,
+  volumeKeysToFlip: true,
+};
+
 export const DEFAULT_VIEW_CONFIG: ViewConfig = {
   sideBarTab: 'toc',
   uiLanguage: '',
@@ -230,8 +237,10 @@ export const DEFAULT_VIEW_CONFIG: ViewConfig = {
   showRemainingTime: false,
   showRemainingPages: false,
   showProgressInfo: true,
+  tapToToggleFooter: false,
   showMarginsOnScroll: false,
   progressStyle: 'fraction',
+  progressInfoMode: 'all',
 };
 
 export const DEFAULT_TTS_CONFIG: TTSConfig = {
@@ -248,6 +257,12 @@ export const DEFAULT_TRANSLATOR_CONFIG: TranslatorConfig = {
   translateTargetLang: '',
   showTranslateSource: true,
   ttsReadAloudText: 'both',
+};
+
+export const DEFAULT_ANNOTATOR_CONFIG: AnnotatorConfig = {
+  enableAnnotationQuickActions: true,
+  annotationQuickAction: null,
+  copyToNotebook: false,
 };
 
 export const DEFAULT_SCREEN_CONFIG: ScreenConfig = {

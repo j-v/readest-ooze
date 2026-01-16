@@ -144,7 +144,7 @@ const getColorStyles = (
       ${overrideColor ? `background-color: ${bg} !important;` : ''}
     }
     a:any-link {
-      ${overrideColor ? `color: ${primary};` : isDarkMode ? `color: lightblue;` : ''}
+      ${overrideColor ? `color: ${primary} !important;` : isDarkMode ? `color: lightblue;` : ''}
       text-decoration: ${isEink ? 'underline' : 'none'};
     }
     body.pbg {
@@ -155,7 +155,7 @@ const getColorStyles = (
       ${!isDarkMode && overrideColor ? 'mix-blend-mode: multiply;' : ''}
     }
     /* horizontal rule #1649 */
-    *:has(> hr[class]):not(body) {
+    *:has(> hr.background-img):not(body) {
       background-color: ${bg};
     }
     hr {
@@ -164,6 +164,11 @@ const getColorStyles = (
     /* inline images */
     p img, span img, sup img {
       mix-blend-mode: ${isDarkMode ? 'screen' : 'multiply'};
+    }
+    table {
+      max-width: calc(var(--available-width));
+      overflow: auto;
+      table-layout: fixed;
     }
     /* code */
     body.theme-dark code {
@@ -244,6 +249,8 @@ const getLayoutStyles = (
     ${writingMode === 'auto' ? '' : `writing-mode: ${writingMode} !important;`}
     text-align: var(--default-text-align);
     max-height: unset;
+    -webkit-touch-callout: none;
+    -webkit-user-select: text;
   }
   body {
     overflow: unset;
@@ -253,6 +260,9 @@ const getLayoutStyles = (
     height: auto;
     width: auto;
     background-color: transparent !important;
+  }
+  figure > div:has(img) {
+    height: auto !important;
   }
   /* enlarge the clickable area of links */
   a {
@@ -280,6 +290,10 @@ const getLayoutStyles = (
   dd.aligned-center, div.aligned-center {
     text-align: center ${overrideLayout ? '!important' : ''};
   }
+  p.aligned-left, blockquote.aligned-left,
+  dd.aligned-left, div.aligned-left {
+    ${justify && overrideLayout ? 'text-align: justify !important;' : ''}
+  }
   p.aligned-right, blockquote.aligned-right,
   dd.aligned-right, div.aligned-right {
     text-align: right ${overrideLayout ? '!important' : ''};
@@ -303,17 +317,18 @@ const getLayoutStyles = (
   p {
     ${vertical ? `margin-left: ${paragraphMargin}em ${overrideLayout ? '!important' : ''};` : ''}
     ${vertical ? `margin-right: ${paragraphMargin}em ${overrideLayout ? '!important' : ''};` : ''}
+    ${vertical ? `margin-top: unset ${overrideLayout ? '!important' : ''};` : ''}
+    ${vertical ? `margin-bottom: unset ${overrideLayout ? '!important' : ''};` : ''}
     ${!vertical ? `margin-top: ${paragraphMargin}em ${overrideLayout ? '!important' : ''};` : ''}
     ${!vertical ? `margin-bottom: ${paragraphMargin}em ${overrideLayout ? '!important' : ''};` : ''}
+    ${!vertical ? `margin-left: unset ${overrideLayout ? '!important' : ''};` : ''}
+    ${!vertical ? `margin-right: unset ${overrideLayout ? '!important' : ''};` : ''}
   }
   div {
     ${vertical && overrideLayout ? `margin-left: ${paragraphMargin}em !important;` : ''}
     ${vertical && overrideLayout ? `margin-right: ${paragraphMargin}em !important;` : ''}
     ${!vertical && overrideLayout ? `margin-top: ${paragraphMargin}em !important;` : ''}
     ${!vertical && overrideLayout ? `margin-bottom: ${paragraphMargin}em !important;` : ''}
-  }
-  h1, h2, h3, h4, h5, h6 {
-    text-align: initial;
   }
 
   :lang(zh), :lang(ja), :lang(ko) {
@@ -334,6 +349,10 @@ const getLayoutStyles = (
   }
 
   /* Now begins really dirty hacks to fix some badly designed epubs */
+  body {
+    line-height: unset;
+  }
+
   img.pi {
     ${vertical ? 'transform: rotate(90deg);' : ''}
     ${vertical ? 'transform-origin: center;' : ''}
@@ -373,8 +392,8 @@ const getLayoutStyles = (
     height: 1em;
   }
   img.has-text-siblings {
-    height: 1em;
-    vertical-align: middle;
+    ${vertical ? 'width: 1em;' : 'height: 1em;'}
+    vertical-align: baseline;
   }
   :is(div) > img.has-text-siblings[style*="object-fit"] {
     display: block;
@@ -391,11 +410,23 @@ const getLayoutStyles = (
     height: auto;
   }
 
+  /* page break */
+  body.paginated-mode div[style*="page-break-after: always"],
+  body.paginated-mode div[style*="page-break-after:always"],
+  body.paginated-mode p[style*="page-break-after: always"],
+  body.paginated-mode p[style*="page-break-after:always"] {
+    margin-bottom: calc(var(--available-height) * 1px);
+  }
+
   /* workaround for some badly designed epubs */
   div.left *, p.left * { text-align: left; }
   div.right *, p.right * { text-align: right; }
   div.center *, p.center * { text-align: center; }
   div.justify *, p.justify * { text-align: justify; }
+
+  .br {
+    display: flow-root;
+  }
 
   .h5_mainbody {
     overflow: unset !important;
@@ -583,9 +614,10 @@ export const applyTranslationStyle = (viewSettings: ViewSettings) => {
   document.head.appendChild(styleElement);
 };
 
-export const transformStylesheet = (vw: number, vh: number, css: string) => {
+export const transformStylesheet = (css: string, vw: number, vh: number, vertical: boolean) => {
   const isMobile = ['ios', 'android'].includes(getOSPlatform());
   const fontScale = isMobile ? 1.25 : 1;
+  const isInlineStyle = !css.includes('{');
   const ruleRegex = /([^{]+)({[^}]+})/g;
   css = css.replace(ruleRegex, (match, selector, block) => {
     const hasTextAlignCenter = /text-align\s*:\s*center\s*[;$]/.test(block);
@@ -614,18 +646,39 @@ export const transformStylesheet = (vw: number, vh: number, css: string) => {
     return match;
   });
 
+  if (isInlineStyle) {
+    const hasPageBreakAfterAlways = /page-break-after\s*:\s*always\s*[;]?/.test(css);
+    if (hasPageBreakAfterAlways && !/margin-bottom\s*:/.test(css)) {
+      css = css.replace(/;?\s*$/, '') + '; margin-bottom: calc(var(--available-height) * 1px)';
+    }
+  } else {
+    css = css.replace(ruleRegex, (match, selector, block) => {
+      const hasPageBreakAfterAlways = /page-break-after\s*:\s*always\s*[;$]/.test(block);
+      if (hasPageBreakAfterAlways) {
+        if (!/margin-bottom\s*:/.test(block)) {
+          block = block.replace(/}$/, ' margin-bottom: calc(var(--available-height) * 1px); }');
+        }
+        return selector + block;
+      }
+      return match;
+    });
+  }
+
   // Process duokan-bleed
   css = css.replace(ruleRegex, (_, selector, block) => {
-    const directions = ['top', 'bottom', 'left', 'right'];
+    if (vertical) return selector + block;
+
+    const directions: string[] = [];
     let hasBleed = false;
-    for (const dir of directions) {
+    for (const dir of ['top', 'bottom', 'left', 'right']) {
       const bleedRegex = new RegExp(`duokan-bleed\\s*:\\s*[^;]*${dir}[^;]*;`);
       const marginRegex = new RegExp(`margin-${dir}\\s*:`);
       if (bleedRegex.test(block) && !marginRegex.test(block)) {
         hasBleed = true;
+        directions.push(dir);
         block = block.replace(
           /}$/,
-          ` margin-${dir}: calc(-1 * var(--margin-${dir})) !important; }`,
+          ` margin-${dir}: calc(-1 * var(--page-margin-${dir})) !important; }`,
         );
       }
     }
@@ -638,6 +691,26 @@ export const transformStylesheet = (vw: number, vh: number, css: string) => {
       }
       if (!/display\s*:/.test(block)) {
         block = block.replace(/}$/, ' display: flow-root !important; }');
+      }
+      if (!/width\s*:/.test(block) && directions.includes('left') && directions.includes('right')) {
+        block = block
+          .replace(
+            /}$/,
+            ' width: calc(var(--_max-width) + var(--page-margin-left) + var(--page-margin-right)) !important; }',
+          )
+          .replace(/}$/, ' max-width: 100vw !important; }');
+      }
+      if (
+        !/height\s*:/.test(block) &&
+        directions.includes('top') &&
+        directions.includes('bottom')
+      ) {
+        block = block
+          .replace(
+            /}$/,
+            ' height: calc(100% + var(--page-margin-top) + var(--page-margin-bottom)) !important; }',
+          )
+          .replace(/}$/, ' max-height: 100vh !important; }');
       }
     }
     return selector + block;
@@ -663,6 +736,9 @@ export const transformStylesheet = (vw: number, vh: number, css: string) => {
       const rem = parseFloat(pt) / fontScale / 12;
       return `font-size: ${rem}rem`;
     })
+    .replace(/font-size\s*:\s*(\d*\.?\d+)(px|rem|em|%)?/gi, (_, size, unit = 'px') => {
+      return `font-size: max(${size}${unit}, var(--min-font-size, 8px))`;
+    })
     .replace(/(\d*\.?\d+)vw/gi, (_, d) => (parseFloat(d) * vw) / 100 + 'px')
     .replace(/(\d*\.?\d+)vh/gi, (_, d) => (parseFloat(d) * vh) / 100 + 'px')
     .replace(/([\s;])font-family\s*:\s*monospace/gi, '$1font-family: var(--monospace)')
@@ -686,6 +762,24 @@ export const applyScrollModeClass = (document: Document, isScrollMode: boolean) 
 
 export const applyImageStyle = (document: Document) => {
   document.querySelectorAll('img').forEach((img) => {
+    const widthAttr = img.getAttribute('width');
+    if (widthAttr && (widthAttr.endsWith('%') || widthAttr.endsWith('vw'))) {
+      const percentage = parseFloat(widthAttr);
+      if (!isNaN(percentage)) {
+        img.style.width = `${(percentage / 100) * window.innerWidth}px`;
+        img.removeAttribute('width');
+      }
+    }
+
+    const heightAttr = img.getAttribute('height');
+    if (heightAttr && (heightAttr.endsWith('%') || heightAttr.endsWith('vh'))) {
+      const percentage = parseFloat(heightAttr);
+      if (!isNaN(percentage)) {
+        img.style.height = `${(percentage / 100) * window.innerHeight}px`;
+        img.removeAttribute('height');
+      }
+    }
+
     const parent = img.parentNode;
     if (!parent || parent.nodeType !== Node.ELEMENT_NODE) return;
     const hasTextSiblings = Array.from(parent.childNodes).some(
@@ -696,6 +790,12 @@ export const applyImageStyle = (document: Document) => {
     );
     if (hasTextSiblings && isInline) {
       img.classList.add('has-text-siblings');
+    }
+  });
+  document.querySelectorAll('hr').forEach((hr) => {
+    const computedStyle = window.getComputedStyle(hr);
+    if (computedStyle.backgroundImage && computedStyle.backgroundImage !== 'none') {
+      hr.classList.add('background-img');
     }
   });
 };
@@ -726,7 +826,7 @@ export const applyTableStyle = (document: Document) => {
           const widthUnit = widthStr.replace(widthValue.toString(), '').trim();
 
           if (widthUnit === 'px' || !widthUnit) {
-            rowWidth += widthValue + 6;
+            rowWidth += widthValue;
           } else if (widthUnit === '%') {
             rowWidth += (window.innerWidth * widthValue) / 100;
           }
@@ -751,6 +851,8 @@ export const keepTextAlignment = (document: Document) => {
     const computedStyle = window.getComputedStyle(el);
     if (computedStyle.textAlign === 'center') {
       el.classList.add('aligned-center');
+    } else if (computedStyle.textAlign === 'left') {
+      el.classList.add('aligned-left');
     } else if (computedStyle.textAlign === 'right') {
       el.classList.add('aligned-right');
     } else if (computedStyle.textAlign === 'justify') {

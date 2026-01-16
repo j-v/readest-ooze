@@ -27,7 +27,6 @@ const POPULAR_CATALOGS: OPDSCatalog[] = [
     url: 'https://standardebooks.org/feeds/opds',
     description: 'Free and liberated ebooks, carefully produced for the true book lover',
     icon: '📚',
-    disabled: isWebAppPlatform(),
   },
   {
     id: 'manybooks',
@@ -192,7 +191,7 @@ export function CatalogManager() {
                   <div className='flex items-center justify-between'>
                     <div className='min-w-0 flex-1'>
                       <div className='mb-1 flex items-center justify-between'>
-                        <h3 className='card-title truncate text-sm'>
+                        <h3 className='card-title line-clamp-1 text-sm'>
                           {catalog.icon && <span className=''>{catalog.icon}</span>}
                           {catalog.name}
                         </h3>
@@ -209,7 +208,7 @@ export function CatalogManager() {
                           {catalog.description}
                         </p>
                       )}
-                      <p className='text-base-content/50 truncate text-xs'>{catalog.url}</p>
+                      <p className='text-base-content/50 line-clamp-1 text-xs'>{catalog.url}</p>
                       {catalog.username && (
                         <p className='text-base-content/50 mt-1 text-xs'>
                           {_('Username')}: {catalog.username}
@@ -407,9 +406,6 @@ export function CatalogManager() {
                 </div>
               </form>
             </div>
-            <form method='dialog' className='modal-backdrop'>
-              <button onClick={() => setShowAddDialog(false)}>{_('Close')}</button>
-            </form>
           </dialog>
         </ModalPortal>
       )}

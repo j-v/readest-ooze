@@ -54,10 +54,19 @@ import {
   DEFAULT_FIXED_LAYOUT_VIEW_SETTINGS,
   SETTINGS_FILENAME,
   DEFAULT_MOBILE_SYSTEM_SETTINGS,
+  DEFAULT_ANNOTATOR_CONFIG,
+  DEFAULT_EINK_VIEW_SETTINGS,
   DEFAULT_CUSTOM_TTS_ENDPOINT_CONFIG,
 } from './constants';
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
-import { getOSPlatform, getTargetLang, isCJKEnv, isContentURI, isValidURL } from '@/utils/misc';
+import {
+  getOSPlatform,
+  getTargetLang,
+  isCJKEnv,
+  isContentURI,
+  isValidURL,
+  makeSafeFilename,
+} from '@/utils/misc';
 import { deserializeConfig, serializeConfig } from '@/utils/serializer';
 import {
   downloadFile,
@@ -88,6 +97,7 @@ export abstract class BaseAppService implements AppService {
   isMobileApp = false;
   isPortableApp = false;
   isDesktopApp = false;
+  isEink = false;
   hasTrafficLight = false;
   hasWindow = false;
   hasWindowBar = false;
@@ -112,6 +122,12 @@ export abstract class BaseAppService implements AppService {
   abstract setCustomRootDir(customRootDir: string): Promise<void>;
   abstract selectDirectory(mode: SelectDirectoryMode): Promise<string>;
   abstract selectFiles(name: string, extensions: string[]): Promise<string[]>;
+  abstract saveFile(
+    filename: string,
+    content: string | ArrayBuffer,
+    filepath: string,
+    mimeType?: string,
+  ): Promise<boolean>;
 
   protected async runMigrations(lastMigrationVersion: number): Promise<void> {
     if (lastMigrationVersion < 20251124) {
@@ -133,6 +149,10 @@ export abstract class BaseAppService implements AppService {
 
   async copyFile(srcPath: string, dstPath: string, base: BaseDir): Promise<void> {
     return await this.fs.copyFile(srcPath, dstPath, base);
+  }
+
+  async readFile(path: string, base: BaseDir, mode: 'text' | 'binary') {
+    return await this.fs.readFile(path, base, mode);
   }
 
   async writeFile(path: string, base: BaseDir, content: string | ArrayBuffer | File) {
@@ -196,10 +216,12 @@ export abstract class BaseAppService implements AppService {
       ...DEFAULT_BOOK_FONT,
       ...DEFAULT_BOOK_LANGUAGE,
       ...(this.isMobile ? DEFAULT_MOBILE_VIEW_SETTINGS : {}),
+      ...(this.isEink ? DEFAULT_EINK_VIEW_SETTINGS : {}),
       ...(isCJKEnv() ? DEFAULT_CJK_VIEW_SETTINGS : {}),
       ...DEFAULT_VIEW_CONFIG,
       ...DEFAULT_TTS_CONFIG,
       ...DEFAULT_SCREEN_CONFIG,
+      ...DEFAULT_ANNOTATOR_CONFIG,
       ...{ ...DEFAULT_TRANSLATOR_CONFIG, translateTargetLang: getTargetLang() },
     };
   }
@@ -398,26 +420,23 @@ export abstract class BaseAppService implements AppService {
       if (!(await this.fs.exists(getDir(book), 'Books'))) {
         await this.fs.createDir(getDir(book), 'Books');
       }
-      if (
-        saveBook &&
-        !transient &&
-        (!(await this.fs.exists(getLocalBookFilename(book), 'Books')) || overwrite)
-      ) {
+      const bookFilename = getLocalBookFilename(book);
+      if (saveBook && !transient && (!(await this.fs.exists(bookFilename, 'Books')) || overwrite)) {
         if (/\.txt$/i.test(filename)) {
-          await this.fs.writeFile(getLocalBookFilename(book), 'Books', fileobj);
+          await this.fs.writeFile(bookFilename, 'Books', fileobj);
         } else if (typeof file === 'string' && isContentURI(file)) {
-          await this.fs.copyFile(file, getLocalBookFilename(book), 'Books');
+          await this.fs.copyFile(file, bookFilename, 'Books');
         } else if (typeof file === 'string' && !isValidURL(file)) {
           try {
             // try to copy the file directly first in case of large files to avoid memory issues
             // on desktop when reading recursively from selected directory the direct copy will fail
             // due to permission issues, then fallback to read and write files
-            await this.fs.copyFile(file, getLocalBookFilename(book), 'Books');
+            await this.fs.copyFile(file, bookFilename, 'Books');
           } catch {
-            await this.fs.writeFile(getLocalBookFilename(book), 'Books', fileobj);
+            await this.fs.writeFile(bookFilename, 'Books', await fileobj.arrayBuffer());
           }
         } else {
-          await this.fs.writeFile(getLocalBookFilename(book), 'Books', fileobj);
+          await this.fs.writeFile(bookFilename, 'Books', fileobj);
         }
       }
       if (saveCover && (!(await this.fs.exists(getCoverFilename(book), 'Books')) || overwrite)) {
@@ -655,6 +674,15 @@ export abstract class BaseAppService implements AppService {
     if ((bookCoverDownloaded || !needDownCover) && !book.coverDownloadedAt) {
       book.coverDownloadedAt = Date.now();
     }
+  }
+
+  async exportBook(book: Book): Promise<boolean> {
+    const { file } = await this.loadBookContent(book);
+    const content = await file.arrayBuffer();
+    const filename = `${makeSafeFilename(book.title)}.${book.format.toLowerCase()}`;
+    const filepath = await this.resolveFilePath(getLocalBookFilename(book), 'Books');
+    const fileType = file.type || 'application/octet-stream';
+    return await this.saveFile(filename, content, filepath, fileType);
   }
 
   async isBookAvailable(book: Book): Promise<boolean> {

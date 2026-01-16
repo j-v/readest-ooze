@@ -1,8 +1,15 @@
 import { md5 } from 'js-md5';
-import { isTauriAppPlatform, isWebAppPlatform } from '@/services/environment';
+import {
+  getAPIBaseUrl,
+  getNodeAPIBaseUrl,
+  isTauriAppPlatform,
+  isWebAppPlatform,
+} from '@/services/environment';
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
 import { READEST_OPDS_USER_AGENT } from '@/services/constants';
 
+const OPDS_PROXY_URL = `${getAPIBaseUrl()}/opds/proxy`;
+const NODE_OPDS_PROXY_URL = `${getNodeAPIBaseUrl()}/opds/proxy`;
 /**
  * Extract username and password from URL credentials
  */
@@ -34,6 +41,19 @@ export const needsProxy = (url: string): boolean => {
   return isWebAppPlatform() && url.startsWith('http');
 };
 
+const PROXY_OVERRIDES: Record<string, string> = {
+  standardebooks: NODE_OPDS_PROXY_URL,
+};
+
+const getProxyBaseUrl = (url: string): string => {
+  for (const [domain, proxyUrl] of Object.entries(PROXY_OVERRIDES)) {
+    if (url.includes(domain)) {
+      return proxyUrl;
+    }
+  }
+  return OPDS_PROXY_URL;
+};
+
 /**
  * Generate proxied URL for OPDS requests
  */
@@ -46,7 +66,8 @@ export const getProxiedURL = (url: string, auth: string = '', stream = false): s
     if (auth) {
       params.append('auth', auth);
     }
-    const proxyUrl = `/api/opds/proxy?${params.toString()}`;
+    const baseUrl = getProxyBaseUrl(url);
+    const proxyUrl = `${baseUrl}?${params.toString()}`;
     return proxyUrl;
   }
   return url;
@@ -186,7 +207,7 @@ export const probeAuth = async (
   const fetchURL = useProxy ? getProxiedURL(cleanUrl) : cleanUrl;
   const headers: Record<string, string> = {
     'User-Agent': READEST_OPDS_USER_AGENT,
-    Accept: 'application/atom+xml, application/xml, text/xml',
+    Accept: 'application/atom+xml, application/xml, text/xml, */*',
   };
 
   // Probe with HEAD request
@@ -194,6 +215,7 @@ export const probeAuth = async (
   const res = await fetch(fetchURL, {
     method: 'HEAD',
     headers,
+    danger: { acceptInvalidCerts: true, acceptInvalidHostnames: true },
   });
 
   // Check if authentication is required
@@ -219,7 +241,48 @@ export const probeAuth = async (
     }
   }
 
-  return null;
+  // Komga returns 200 even if requires auth, so we return Basic auth header in this case
+  return createBasicAuth(finalUsername, finalPassword);
+};
+
+export const probeFilename = async (
+  url: string,
+  useProxy = false,
+  headers?: Record<string, string>,
+) => {
+  const { url: cleanUrl } = extractCredentialsFromURL(url);
+
+  const fetchURL = useProxy ? getProxiedURL(cleanUrl) : cleanUrl;
+  const baseHeaders: Record<string, string> = {
+    'User-Agent': READEST_OPDS_USER_AGENT,
+    Accept: 'application/atom+xml, application/xml, text/xml, */*',
+  };
+
+  const fetch = isTauriAppPlatform() ? tauriFetch : window.fetch;
+  const res = await fetch(fetchURL, {
+    method: 'HEAD',
+    headers: { ...baseHeaders, ...(headers || {}) },
+    danger: { acceptInvalidCerts: true, acceptInvalidHostnames: true },
+  });
+
+  if (res.ok) {
+    const contentDisposition = res.headers.get('content-disposition');
+    if (contentDisposition) {
+      const extendedMatch = contentDisposition.match(
+        /filename\*\s*=\s*(?:utf-8|UTF-8)'[^']*'([^;\s]+)/i,
+      );
+      if (extendedMatch?.[1]) {
+        return decodeURIComponent(extendedMatch[1]);
+      }
+
+      const plainMatch = contentDisposition.match(/filename\s*=\s*["']?([^"';\s]+)["']?/i);
+      if (plainMatch?.[1]) {
+        return decodeURIComponent(plainMatch[1]);
+      }
+    }
+  }
+
+  return '';
 };
 
 /**
@@ -244,7 +307,7 @@ export const fetchWithAuth = async (
   const fetchURL = useProxy ? getProxiedURL(cleanUrl) : cleanUrl;
   const headers: Record<string, string> = {
     'User-Agent': READEST_OPDS_USER_AGENT,
-    Accept: 'application/atom+xml, application/xml, text/xml',
+    Accept: 'application/atom+xml, application/xml, text/xml, */*',
     ...(options.headers as Record<string, string>),
   };
 
@@ -253,6 +316,7 @@ export const fetchWithAuth = async (
     ...options,
     method: options.method || 'GET',
     headers,
+    danger: { acceptInvalidCerts: true, acceptInvalidHostnames: true },
   });
 
   // Handle authentication if needed
@@ -280,6 +344,7 @@ export const fetchWithAuth = async (
           ...options,
           method: options.method || 'GET',
           headers: useProxy ? headers : { ...headers, Authorization: authHeader },
+          danger: { acceptInvalidCerts: true, acceptInvalidHostnames: true },
         });
       }
     }

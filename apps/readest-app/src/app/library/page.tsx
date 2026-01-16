@@ -10,11 +10,12 @@ import 'overlayscrollbars/overlayscrollbars.css';
 
 import { Book } from '@/types/book';
 import { AppService, DeleteAction } from '@/types/system';
-import { navigateToLibrary, navigateToLogin, navigateToReader } from '@/utils/nav';
+import { navigateToLibrary, navigateToReader } from '@/utils/nav';
 import { formatAuthors, formatTitle, getPrimaryLanguage, listFormater } from '@/utils/book';
 import { eventDispatcher } from '@/utils/event';
 import { ProgressPayload } from '@/utils/transfer';
 import { throttle } from '@/utils/throttle';
+import { transferManager } from '@/services/transferManager';
 import { getDirPath, getFilename, joinPaths } from '@/utils/path';
 import { parseOpenWithFiles } from '@/helpers/openWith';
 import { isTauriAppPlatform, isWebAppPlatform } from '@/services/environment';
@@ -35,6 +36,7 @@ import { useUICSS } from '@/hooks/useUICSS';
 import { useDemoBooks } from './hooks/useDemoBooks';
 import { useBooksSync } from './hooks/useBooksSync';
 import { useBookDataStore } from '@/store/bookDataStore';
+import { useTransferStore } from '@/store/transferStore';
 import { useScreenWakeLock } from '@/hooks/useScreenWakeLock';
 import { useOpenWithBooks } from '@/hooks/useOpenWithBooks';
 import { SelectedFile, useFileSelector } from '@/hooks/useFileSelector';
@@ -55,6 +57,7 @@ import { UpdaterWindow } from '@/components/UpdaterWindow';
 import { CatalogDialog } from './components/OPDSDialog';
 import { MigrateDataWindow } from './components/MigrateDataWindow';
 import { useDragDropImport } from './hooks/useDragDropImport';
+import { useTransferQueue } from '@/hooks/useTransferQueue';
 import { Toast } from '@/components/Toast';
 import { getBreadcrumbs } from './utils/libraryUtils';
 import Spinner from '@/components/Spinner';
@@ -63,6 +66,8 @@ import Bookshelf from './components/Bookshelf';
 import useShortcuts from '@/hooks/useShortcuts';
 import DropIndicator from '@/components/DropIndicator';
 import SettingsDialog from '@/components/settings/SettingsDialog';
+import ModalPortal from '@/components/ModalPortal';
+import TransferQueuePanel from './components/TransferQueuePanel';
 
 const LibraryPageWithSearchParams = () => {
   const searchParams = useSearchParams();
@@ -93,7 +98,10 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
   const { clearBookData } = useBookDataStore();
   const { settings, setSettings, saveSettings } = useSettingsStore();
   const { isSettingsDialogOpen, setSettingsDialogOpen } = useSettingsStore();
-  const [showCatalogManager, setShowCatalogManager] = useState(false);
+  const { isTransferQueueOpen } = useTransferStore();
+  const [showCatalogManager, setShowCatalogManager] = useState(
+    searchParams?.get('opds') === 'true',
+  );
   const [loading, setLoading] = useState(false);
   const [libraryLoaded, setLibraryLoaded] = useState(false);
   const [isSelectMode, setIsSelectMode] = useState(false);
@@ -118,6 +126,7 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
   useUICSS();
 
   useOpenWithBooks();
+  useTransferQueue(libraryLoaded);
 
   const { pullLibrary, pushLibrary } = useBooksSync();
   const { isDragging } = useDragDropImport();
@@ -231,6 +240,13 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
           if (book) {
             bookIds.push(book.hash);
           }
+          if (user && book && !temp && !book.uploadedAt && settings.autoUpload) {
+            setTimeout(() => {
+              console.log('Queueing upload for book:', book.title);
+              transferManager.queueUpload(book);
+              // wait for the initialization of the transfer manager and opening of the book
+            }, 3000);
+          }
         } catch (error) {
           console.log('Failed to import book:', file, error);
         }
@@ -268,6 +284,17 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
       return true;
     }
     return false;
+  };
+
+  const handleShowOPDSDialog = () => {
+    setShowCatalogManager(true);
+  };
+
+  const handleDismissOPDSDialog = () => {
+    setShowCatalogManager(false);
+    const params = new URLSearchParams(searchParams?.toString());
+    params.delete('opds');
+    navigateToLibrary(router, `${params.toString()}`);
   };
 
   useEffect(() => {
@@ -323,7 +350,7 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
     };
 
     const handleOpenWithBooks = async (appService: AppService, library: Book[]) => {
-      const openWithFiles = (await parseOpenWithFiles()) || [];
+      const openWithFiles = (await parseOpenWithFiles(appService)) || [];
 
       if (openWithFiles.length > 0) {
         return await processOpenWithFiles(appService, openWithFiles, library);
@@ -396,8 +423,8 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
           await updateBook(envConfig, book);
         }
         if (user && book && !book.uploadedAt && settings.autoUpload) {
-          console.log('Uploading book:', book.title);
-          handleBookUpload(book, false);
+          console.log('Queueing upload for book:', book.title);
+          transferManager.queueUpload(book);
         }
         if (book) {
           successfulImports.push(book.title);
@@ -458,83 +485,66 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
   }, 500);
 
   const handleBookUpload = useCallback(
-    async (book: Book, syncBooks = true) => {
-      try {
-        await appService?.uploadBook(book, (progress) => {
-          updateBookTransferProgress(book.hash, progress);
-        });
-        setBooksTransferProgress((prev) => {
-          const updated = { ...prev };
-          delete updated[book.hash];
-          return updated;
-        });
-        await updateBook(envConfig, book);
-        if (syncBooks) pushLibrary();
+    async (book: Book, _syncBooks = true) => {
+      // Use transfer queue for uploads - priority 1 for manual uploads (higher priority)
+      const transferId = transferManager.queueUpload(book, 1);
+      if (transferId) {
         eventDispatcher.dispatch('toast', {
           type: 'info',
           timeout: 2000,
-          message: _('Book uploaded: {{title}}', {
+          message: _('Upload queued: {{title}}', {
             title: book.title,
           }),
         });
         return true;
-      } catch (err) {
-        setBooksTransferProgress((prev) => {
-          const updated = { ...prev };
-          delete updated[book.hash];
-          return updated;
-        });
-        if (err instanceof Error) {
-          if (err.message.includes('Not authenticated') && settings.keepLogin) {
-            settings.keepLogin = false;
-            setSettings(settings);
-            navigateToLogin(router);
-            return false;
-          } else if (err.message.includes('Insufficient storage quota')) {
-            eventDispatcher.dispatch('toast', {
-              type: 'error',
-              message: _('Insufficient storage quota'),
-            });
-            return false;
-          }
-        }
-        eventDispatcher.dispatch('toast', {
-          type: 'error',
-          message: _('Failed to upload book: {{title}}', {
-            title: book.title,
-          }),
-        });
-        return false;
       }
+      return false;
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [appService],
+    [],
   );
 
   const handleBookDownload = useCallback(
-    async (book: Book, redownload = false) => {
-      try {
-        await appService?.downloadBook(book, false, redownload, (progress) => {
-          updateBookTransferProgress(book.hash, progress);
-        });
-        await updateBook(envConfig, book);
+    async (book: Book, downloadOptions: { redownload?: boolean; queued?: boolean } = {}) => {
+      const { redownload = false, queued = false } = downloadOptions;
+      if (redownload || !queued) {
+        try {
+          await appService?.downloadBook(book, false, redownload, (progress) => {
+            updateBookTransferProgress(book.hash, progress);
+          });
+          await updateBook(envConfig, book);
+          eventDispatcher.dispatch('toast', {
+            type: 'info',
+            timeout: 2000,
+            message: _('Book downloaded: {{title}}', {
+              title: book.title,
+            }),
+          });
+          return true;
+        } catch {
+          eventDispatcher.dispatch('toast', {
+            message: _('Failed to download book: {{title}}', {
+              title: book.title,
+            }),
+            type: 'error',
+          });
+          return false;
+        }
+      }
+
+      // Use transfer queue for normal downloads - priority 1 for manual downloads
+      const transferId = transferManager.queueDownload(book, 1);
+      if (transferId) {
         eventDispatcher.dispatch('toast', {
           type: 'info',
           timeout: 2000,
-          message: _('Book downloaded: {{title}}', {
+          message: _('Download queued: {{title}}', {
             title: book.title,
           }),
         });
         return true;
-      } catch {
-        eventDispatcher.dispatch('toast', {
-          message: _('Failed to download book: {{title}}', {
-            title: book.title,
-          }),
-          type: 'error',
-        });
-        return false;
       }
+      return false;
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [appService],
@@ -552,14 +562,32 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
         cloud: _('Failed to delete cloud backup of the book: {{title}}', { title: book.title }),
         local: _('Failed to delete local copy of the book: {{title}}', { title: book.title }),
       };
+
       try {
-        await appService?.deleteBook(book, deleteAction);
-        await updateBook(envConfig, book);
-        clearBookData(book.hash);
-        if (syncBooks) pushLibrary();
+        // Handle local deletion immediately
+        if (deleteAction === 'local' || deleteAction === 'both') {
+          await appService?.deleteBook(book, 'local');
+          if (deleteAction === 'both') {
+            book.deletedAt = Date.now();
+            book.downloadedAt = null;
+            book.coverDownloadedAt = null;
+          }
+          await updateBook(envConfig, book);
+          clearBookData(book.hash);
+          if (syncBooks) pushLibrary();
+        }
+
+        // Queue cloud deletion
+        if (deleteAction === 'cloud' || deleteAction === 'both') {
+          const transferId = transferManager.queueDelete(book, 1, true);
+          if (!transferId) {
+            throw new Error('Failed to queue cloud deletion');
+          }
+        }
+
         eventDispatcher.dispatch('toast', {
           type: 'info',
-          timeout: 2000,
+          timeout: 1000,
           message: deletionMessages[deleteAction],
         });
         return true;
@@ -716,7 +744,7 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
           onImportBooksFromDirectory={
             appService?.canReadExternalDir ? handleImportBooksFromDirectory : undefined
           }
-          onOpenCatalogManager={() => setShowCatalogManager(true)}
+          onOpenCatalogManager={handleShowOPDSDialog}
           onToggleSelectMode={() => handleSetSelectMode(!isSelectMode)}
           onSelectAll={handleSelectAll}
           onDeselectAll={handleDeselectAll}
@@ -843,11 +871,16 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
           handleBookMetadataUpdate={handleUpdateMetadata}
         />
       )}
+      {isTransferQueueOpen && (
+        <ModalPortal>
+          <TransferQueuePanel />
+        </ModalPortal>
+      )}
       <AboutWindow />
       <UpdaterWindow />
       <MigrateDataWindow />
       {isSettingsDialogOpen && <SettingsDialog bookKey={''} />}
-      {showCatalogManager && <CatalogDialog onClose={() => setShowCatalogManager(false)} />}
+      {showCatalogManager && <CatalogDialog onClose={handleDismissOPDSDialog} />}
       <Toast />
     </div>
   );

@@ -79,6 +79,8 @@ export const EXTS: Record<BookFormat, string> = {
   CBZ: 'cbz',
   FB2: 'fb2',
   FBZ: 'fbz',
+  TXT: 'txt',
+  MD: 'md',
 };
 
 export const MIMETYPES: Record<BookFormat, string[]> = {
@@ -87,9 +89,11 @@ export const MIMETYPES: Record<BookFormat, string[]> = {
   MOBI: ['application/x-mobipocket-ebook'],
   AZW: ['application/vnd.amazon.ebook'],
   AZW3: ['application/vnd.amazon.mobi8-ebook', 'application/x-mobi8-ebook'],
-  CBZ: ['application/vnd.comicbook+zip', 'application/zip'],
+  CBZ: ['application/vnd.comicbook+zip', 'application/zip', 'application/x-cbz'],
   FB2: ['application/x-fictionbook+xml', 'text/xml', 'application/xml'],
   FBZ: ['application/x-zip-compressed-fb2', 'application/zip'],
+  TXT: ['text/plain'],
+  MD: ['text/markdown', 'text/x-markdown'],
 };
 
 export class DocumentLoader {
@@ -243,7 +247,9 @@ export const getDirection = (doc: Document) => {
   return { vertical, rtl };
 };
 
-export const getFileExtFromMimeType = (mimeType: string): string => {
+export const getFileExtFromMimeType = (mimeType?: string): string => {
+  if (!mimeType) return '';
+
   for (const format in MIMETYPES) {
     const list = MIMETYPES[format as BookFormat];
     if (list.includes(mimeType)) {
@@ -251,4 +257,15 @@ export const getFileExtFromMimeType = (mimeType: string): string => {
     }
   }
   return '';
+};
+
+export const getMimeTypeFromFileExt = (ext: string): string => {
+  ext = ext.toLowerCase();
+  for (const format in EXTS) {
+    if (EXTS[format as BookFormat] === ext) {
+      const mimeTypes = MIMETYPES[format as BookFormat];
+      return mimeTypes[0] || 'application/octet-stream';
+    }
+  }
+  return 'application/octet-stream';
 };

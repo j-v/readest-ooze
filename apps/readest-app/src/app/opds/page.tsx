@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { isOPDSCatalog, getPublication, getFeed, getOpenSearch } from 'foliate-js/opds.js';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useEnv } from '@/context/EnvContext';
+import { useAuth } from '@/context/AuthContext';
 import { isWebAppPlatform } from '@/services/environment';
 import { downloadFile } from '@/libs/storage';
 import { Toast } from '@/components/Toast';
@@ -14,13 +15,27 @@ import { useThemeStore } from '@/store/themeStore';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useLibraryStore } from '@/store/libraryStore';
 import { useSettingsStore } from '@/store/settingsStore';
+import { transferManager } from '@/services/transferManager';
+import { useTransferQueue } from '@/hooks/useTransferQueue';
 import { useTheme } from '@/hooks/useTheme';
 import { useLibrary } from '@/hooks/useLibrary';
 import { eventDispatcher } from '@/utils/event';
 import { getFileExtFromMimeType } from '@/libs/document';
 import { OPDSFeed, OPDSPublication, OPDSSearch } from '@/types/opds';
-import { isSearchLink, MIME, parseMediaType, resolveURL } from './utils/opdsUtils';
-import { getProxiedURL, fetchWithAuth, probeAuth, needsProxy } from './utils/opdsReq';
+import {
+  getFileExtFromPath,
+  isSearchLink,
+  MIME,
+  parseMediaType,
+  resolveURL,
+} from './utils/opdsUtils';
+import {
+  getProxiedURL,
+  fetchWithAuth,
+  probeAuth,
+  needsProxy,
+  probeFilename,
+} from './utils/opdsReq';
 import { READEST_OPDS_USER_AGENT } from '@/services/constants';
 import { FeedView } from './components/FeedView';
 import { PublicationView } from './components/PublicationView';
@@ -49,6 +64,7 @@ export default function BrowserPage() {
   const _ = useTranslation();
   const router = useRouter();
   const { appService } = useEnv();
+  const { user } = useAuth();
   const { libraryLoaded } = useLibrary();
   const { safeAreaInsets, isRoundedWindow } = useThemeStore();
   const { settings } = useSettingsStore();
@@ -67,14 +83,18 @@ export default function BrowserPage() {
   const [historyIndex, setHistoryIndex] = useState(-1);
 
   const searchParams = useSearchParams();
+  const catalogUrl = searchParams?.get('url') || '';
+  const catalogId = searchParams?.get('id') || '';
   const usernameRef = useRef<string | null | undefined>(undefined);
   const passwordRef = useRef<string | null | undefined>(undefined);
   const startURLRef = useRef<string | null | undefined>(undefined);
   const loadingOPDSRef = useRef(false);
   const historyIndexRef = useRef(-1);
   const isNavigatingHistoryRef = useRef(false);
+  const searchTermRef = useRef('');
 
   useTheme({ systemUIVisible: false });
+  useTransferQueue(libraryLoaded);
 
   useEffect(() => {
     startURLRef.current = state.startURL;
@@ -102,6 +122,40 @@ export default function BrowserPage() {
     },
     [],
   );
+
+  const quickSearch = useCallback((search: OPDSSearch, baseURL: string, searchTerms: string) => {
+    if (searchTerms) {
+      const formData: Record<string, string> = {};
+      search.params?.forEach((param) => {
+        if (param.name === 'count') {
+          formData[param.name] = '20';
+        } else if (param.name === 'startPage') {
+          formData[param.name] = '1';
+        } else if (param.name === 'searchTerms') {
+          formData[param.name] = searchTerms;
+        } else {
+          formData[param.name] = param.value || '';
+        }
+      });
+      const map = new Map<string | null, Map<string | null, string>>();
+
+      for (const param of search.params || []) {
+        const value = formData[param.name] || '';
+        const ns = param.ns ?? null;
+
+        if (map.has(ns)) {
+          map.get(ns)!.set(param.name, value);
+        } else {
+          map.set(ns, new Map([[param.name, value]]));
+        }
+      }
+
+      const searchURL = search.search(map);
+      const resolvedURL = resolveURL(searchURL, baseURL);
+      handleNavigate(resolvedURL, true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const loadOPDS = useCallback(
     async (url: string, options: { skipHistory?: boolean; isSearch?: boolean } = {}) => {
@@ -194,9 +248,12 @@ export default function BrowserPage() {
               startURL: currentStartURL || responseURL,
             };
             setState(newState);
-            setViewMode('search');
-            setSelectedPublication(null);
-
+            if (searchTermRef.current) {
+              quickSearch(search, responseURL, searchTermRef.current);
+            } else {
+              setViewMode('search');
+              setSelectedPublication(null);
+            }
             if (!skipHistory) {
               addToHistory(url, newState, 'search', null);
             }
@@ -249,13 +306,12 @@ export default function BrowserPage() {
         loadingOPDSRef.current = false;
       }
     },
-    [_, router, addToHistory],
+    [_, router, quickSearch, addToHistory],
   );
 
   useEffect(() => {
-    const url = searchParams?.get('url');
+    const url = catalogUrl;
     if (url && !isNavigatingHistoryRef.current) {
-      const catalogId = searchParams?.get('id') || '';
       const catalog = settings.opdsCatalogs?.find((cat) => cat.id === catalogId);
       const { username, password } = catalog || {};
       if (username || password) {
@@ -274,7 +330,7 @@ export default function BrowserPage() {
       setViewMode('error');
       setError(new Error('No OPDS URL provided'));
     }
-  }, [searchParams, settings, libraryLoaded, loadOPDS]);
+  }, [catalogUrl, catalogId, settings, libraryLoaded, loadOPDS]);
 
   const handleNavigate = useCallback(
     (url: string, isSearch = false) => {
@@ -290,50 +346,61 @@ export default function BrowserPage() {
     return !!state.feed?.links?.find(isSearchLink);
   }, [state.feed]);
 
-  const handleSearch = useCallback(() => {
-    if (!state.feed) return;
-
-    const searchLink = state.feed.links?.find(isSearchLink);
-
-    if (searchLink && searchLink.href) {
-      const searchURL = resolveURL(searchLink.href, state.baseURL);
-      if (searchLink.type === MIME.OPENSEARCH) {
-        handleNavigate(searchURL, true);
-      } else if (searchLink.type === MIME.ATOM) {
-        const search: OPDSSearch = {
-          metadata: {
-            title: _('Search'),
-            description: state.feed.metadata?.title
-              ? _('Search in {{title}}', { title: state.feed.metadata.title })
-              : undefined,
-          },
-          params: [
-            {
-              name: 'searchTerms',
-              required: true,
-            },
-          ],
-          search: (map: Map<string | null, Map<string | null, string>>) => {
-            const defaultParams = map.get(null);
-            const searchTerms = defaultParams?.get('searchTerms') || '';
-            const decodedURL = decodeURIComponent(searchURL);
-            return decodedURL.replace('{searchTerms}', encodeURIComponent(searchTerms));
-          },
-        };
-        const newState: OPDSState = {
-          feed: state.feed,
-          search,
-          baseURL: state.baseURL,
-          currentURL: state.currentURL,
-          startURL: state.startURL,
-        };
-        setState(newState);
-        setViewMode('search');
-        setSelectedPublication(null);
-        addToHistory(state.currentURL, newState, 'search', null);
-      }
+  const handleGoStart = useCallback(() => {
+    if (startURLRef.current) {
+      handleNavigate(startURLRef.current);
     }
-  }, [_, state, handleNavigate, addToHistory]);
+    searchTermRef.current = '';
+  }, [startURLRef, handleNavigate]);
+
+  const handleSearch = useCallback(
+    (queryTerm: string) => {
+      if (!state.feed) return;
+
+      searchTermRef.current = queryTerm;
+
+      const searchLink = state.feed.links?.find(isSearchLink);
+      if (searchLink && searchLink.href) {
+        const searchURL = resolveURL(searchLink.href, state.baseURL);
+        if (searchLink.type === MIME.OPENSEARCH) {
+          handleNavigate(searchURL, true);
+        } else if (searchLink.type === MIME.ATOM) {
+          const search: OPDSSearch = {
+            metadata: {
+              title: _('Search'),
+              description: state.feed.metadata?.title
+                ? _('Search in {{title}}', { title: state.feed.metadata.title })
+                : undefined,
+            },
+            params: [
+              {
+                name: 'searchTerms',
+                required: true,
+              },
+            ],
+            search: (map: Map<string | null, Map<string | null, string>>) => {
+              const defaultParams = map.get(null);
+              const searchTerms = defaultParams?.get('searchTerms') || '';
+              const decodedURL = decodeURIComponent(searchURL);
+              return decodedURL.replace('{searchTerms}', encodeURIComponent(searchTerms));
+            },
+          };
+          const newState: OPDSState = {
+            feed: state.feed,
+            search,
+            baseURL: state.baseURL,
+            currentURL: state.currentURL,
+            startURL: state.startURL,
+          };
+          setState(newState);
+          setSelectedPublication(null);
+          setViewMode('search');
+          addToHistory(state.currentURL, newState, 'search', null);
+        }
+      }
+    },
+    [_, state, handleNavigate, addToHistory],
+  );
 
   const handleDownload = useCallback(
     async (
@@ -353,41 +420,49 @@ export default function BrowserPage() {
           }
           return;
         } else {
-          const ext = parsed?.mediaType ? getFileExtFromMimeType(parsed.mediaType) : '';
-          const basename = new URL(url).pathname.replaceAll('/', '_');
-          const filename = ext ? `${basename}.${ext}` : basename;
-          const dstFilePath = await appService?.resolveFilePath(filename, 'Cache');
-          if (dstFilePath) {
-            const username = usernameRef.current || '';
-            const password = passwordRef.current || '';
-            const useProxy = needsProxy(url);
-            let downloadUrl = useProxy ? getProxiedURL(url, '', true) : url;
-            const headers: Record<string, string> = {
-              'User-Agent': READEST_OPDS_USER_AGENT,
-            };
-            if (username || password) {
-              const authHeader = await probeAuth(url, username, password, useProxy);
-              if (authHeader) {
-                headers['Authorization'] = authHeader;
-                downloadUrl = useProxy ? getProxiedURL(url, authHeader, true) : url;
-              }
+          const username = usernameRef.current || '';
+          const password = passwordRef.current || '';
+          const useProxy = needsProxy(url);
+          let downloadUrl = useProxy ? getProxiedURL(url, '', true) : url;
+          const headers: Record<string, string> = {
+            'User-Agent': READEST_OPDS_USER_AGENT,
+            Accept: '*/*',
+          };
+          if (username || password) {
+            const authHeader = await probeAuth(url, username, password, useProxy);
+            if (authHeader) {
+              headers['Authorization'] = authHeader;
+              downloadUrl = useProxy ? getProxiedURL(url, authHeader, true) : url;
             }
-
-            await downloadFile({
-              appService,
-              dst: dstFilePath,
-              cfp: '',
-              url: downloadUrl,
-              headers,
-              singleThreaded: true,
-              onProgress,
-            });
-            const { library, setLibrary } = useLibraryStore.getState();
-            const book = await appService.importBook(dstFilePath, library);
-            setLibrary(library);
-            appService.saveLibraryBooks(library);
-            return book;
           }
+
+          const probedFilename = await probeFilename(url, useProxy, headers);
+          const pathname = decodeURIComponent(new URL(url).pathname);
+          const ext = getFileExtFromMimeType(parsed?.mediaType) || getFileExtFromPath(pathname);
+          const basename = pathname.replaceAll('/', '_');
+          const filename = probedFilename ? probedFilename : ext ? `${basename}.${ext}` : basename;
+          const dstFilePath = await appService?.resolveFilePath(filename, 'Cache');
+          console.log('Downloading to:', dstFilePath);
+          await downloadFile({
+            appService,
+            dst: dstFilePath,
+            cfp: '',
+            url: downloadUrl,
+            headers,
+            singleThreaded: true,
+            skipSslVerification: true,
+            onProgress,
+          });
+          const { library, setLibrary } = useLibraryStore.getState();
+          const book = await appService.importBook(dstFilePath, library);
+          if (user && book && !book.uploadedAt && settings.autoUpload) {
+            setTimeout(() => {
+              transferManager.queueUpload(book);
+            }, 3000);
+          }
+          setLibrary(library);
+          appService.saveLibraryBooks(library);
+          return book;
         }
       } catch (e) {
         console.error('Download error:', e);
@@ -395,7 +470,8 @@ export default function BrowserPage() {
       }
       return;
     },
-    [state.baseURL, appService, libraryLoaded],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [user, state.baseURL, appService, libraryLoaded],
   );
 
   const handleGenerateCachedImageUrl = useCallback(
@@ -429,6 +505,7 @@ export default function BrowserPage() {
           cfp: '',
           url: downloadUrl,
           singleThreaded: true,
+          skipSslVerification: true,
           headers,
         });
         return await appService.getImageURL(cachedPath);
@@ -518,11 +595,10 @@ export default function BrowserPage() {
         }}
       >
         <Navigation
-          currentURL={state.currentURL}
-          startURL={state.startURL}
-          onNavigate={handleNavigate}
+          searchTerm={searchTermRef.current}
           onBack={handleBack}
           onForward={handleForward}
+          onGoStart={handleGoStart}
           onSearch={handleSearch}
           canGoBack={canGoBack}
           canGoForward={canGoForward}

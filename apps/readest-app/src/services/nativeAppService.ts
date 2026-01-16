@@ -14,7 +14,7 @@ import {
   DirEntry,
 } from '@tauri-apps/plugin-fs';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-import { open as openDialog } from '@tauri-apps/plugin-dialog';
+import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import {
   join,
   basename,
@@ -25,6 +25,7 @@ import {
   tempDir,
 } from '@tauri-apps/api/path';
 import { type as osType } from '@tauri-apps/plugin-os';
+import { shareFile } from '@choochmeque/tauri-plugin-sharekit-api';
 
 import {
   FileSystem,
@@ -52,6 +53,7 @@ import {
 declare global {
   interface Window {
     __READEST_UPDATER_DISABLED?: boolean;
+    __READEST_IS_EINK?: boolean;
   }
 }
 
@@ -194,7 +196,7 @@ export const nativeFileSystem: FileSystem = {
     let fname = name || getFilename(fp);
     if (isValidURL(path)) {
       return await new RemoteFile(path, fname).open();
-    } else if (isContentURI(path)) {
+    } else if (isContentURI(path) || (isFileURI(path) && OS_TYPE === 'ios')) {
       fname = await basename(path);
       if (path.includes('com.android.externalstorage')) {
         // If the URI is from shared internal storage (like /storage/emulated/0),
@@ -202,9 +204,10 @@ export const nativeFileSystem: FileSystem = {
         return await new NativeFile(fp, fname, baseDir ? baseDir : null).open();
       } else {
         // Otherwise, for content:// URIs (e.g. from MediaStore, Drive, or third-party apps),
+        // or file:// URIs is security scoped resource in iOS (e.g. from Files app),
         // we cannot access the file directly — so we copy it to a temporary cache location.
         const prefix = await this.getPrefix('Cache');
-        const dst = await join(prefix, fname);
+        const dst = await join(prefix, decodeURIComponent(fname));
         const res = await copyURIToPath({ uri: path, dst });
         if (!res.success) {
           console.error('Failed to open file:', res);
@@ -346,6 +349,11 @@ export const nativeFileSystem: FileSystem = {
       return false;
     }
   },
+  async stats(path: string, base: BaseDir) {
+    const { fp, baseDir } = this.resolvePath(path, base);
+
+    return await stat(fp, baseDir ? { baseDir } : undefined);
+  },
 };
 
 const DIST_CHANNEL = (process.env['NEXT_PUBLIC_DIST_CHANNEL'] || 'readest') as DistChannel;
@@ -361,6 +369,7 @@ export class NativeAppService extends BaseAppService {
   override isLinuxApp = OS_TYPE === 'linux';
   override isMobileApp = ['android', 'ios'].includes(OS_TYPE);
   override isDesktopApp = ['macos', 'windows', 'linux'].includes(OS_TYPE);
+  override isEink = Boolean(window.__READEST_IS_EINK);
   override hasTrafficLight = OS_TYPE === 'macos';
   override hasWindow = !(OS_TYPE === 'ios' || OS_TYPE === 'android');
   override hasWindowBar = !(OS_TYPE === 'ios' || OS_TYPE === 'android');
@@ -464,6 +473,38 @@ export class NativeAppService extends BaseAppService {
       filters: [{ name, extensions }],
     });
     return Array.isArray(selected) ? selected : selected ? [selected] : [];
+  }
+
+  async saveFile(
+    filename: string,
+    content: string | ArrayBuffer,
+    filepath: string,
+    mimeType?: string,
+  ): Promise<boolean> {
+    try {
+      const ext = filename.split('.').pop() || '';
+      if (this.isIOSApp) {
+        await shareFile(filepath, {
+          mimeType: mimeType || 'application/octet-stream',
+        });
+      } else {
+        const filePath = await saveDialog({
+          defaultPath: filename,
+          filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
+        });
+        if (!filePath) return false;
+
+        if (typeof content === 'string') {
+          await writeTextFile(filePath, content);
+        } else {
+          await writeFile(filePath, new Uint8Array(content));
+        }
+      }
+      return true;
+    } catch (error) {
+      console.error('Failed to save file:', error);
+      return false;
+    }
   }
 
   async migrate20251029() {
