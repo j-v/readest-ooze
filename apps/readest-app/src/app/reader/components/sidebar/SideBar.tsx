@@ -325,7 +325,7 @@ const SideBar: React.FC<{
             />
           </div>
           <div className='border-base-300/50 border-b px-3'>
-            <BookCard book={book} />
+            <BookCard book={book} onShowOfflineAudio={() => setShowOfflineAudioDialog(true)} />
           </div>
         </div>
         {isSearchBarVisible && searchResults ? (

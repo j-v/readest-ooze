@@ -8,9 +8,16 @@ import { eventDispatcher } from '@/utils/event';
 import { useResponsiveSize } from '@/hooks/useResponsiveSize';
 import { formatAuthors, formatTitle } from '@/utils/book';
 import BookCover from '@/components/BookCover';
+import SidebarDownloadIndicator from './SidebarDownloadIndicator';
 
-const BookCard = ({ book }: { book: Book }) => {
-  const { title, author } = book;
+const BookCard = ({
+  book,
+  onShowOfflineAudio,
+}: {
+  book: Book;
+  onShowOfflineAudio?: () => void;
+}) => {
+  const { title, author, hash } = book;
   const _ = useTranslation();
   const { isDarkMode } = useThemeStore();
   const iconSize18 = useResponsiveSize(18);
@@ -41,13 +48,18 @@ const BookCard = ({ book }: { book: Book }) => {
         <h4 className='line-clamp-2 w-[90%] text-sm font-semibold'>{formatTitle(title)}</h4>
         <p className='truncate text-xs opacity-75'>{formatAuthors(author)}</p>
       </div>
-      <button
-        className='btn btn-ghost hover:bg-base-300 h-6 min-h-6 w-6 rounded-full p-0 transition-colors'
-        aria-label={_('More Info')}
-        onClick={showBookDetails}
-      >
-        <MdInfoOutline size={iconSize18} className='fill-base-content' />
-      </button>
+      <div className='flex items-center gap-1'>
+        {onShowOfflineAudio && (
+          <SidebarDownloadIndicator bookHash={hash} onClick={onShowOfflineAudio} />
+        )}
+        <button
+          className='btn btn-ghost hover:bg-base-300 h-6 min-h-6 w-6 rounded-full p-0 transition-colors'
+          aria-label={_('More Info')}
+          onClick={showBookDetails}
+        >
+          <MdInfoOutline size={iconSize18} className='fill-base-content' />
+        </button>
+      </div>
     </div>
   );
 };
