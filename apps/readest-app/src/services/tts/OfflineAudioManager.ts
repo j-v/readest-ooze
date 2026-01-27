@@ -685,6 +685,24 @@ class OfflineAudioManager extends EventTarget {
   async getAllDownloadedSections(bookHash: string): Promise<Set<string>> {
     return offlineAudioStorage.getAllDownloadedSections(bookHash);
   }
+
+  /**
+   * Clear error state for a book
+   */
+  async clearError(bookHash: string): Promise<void> {
+    const progress = await offlineAudioStorage.getProgress(bookHash);
+    if (progress) {
+      delete progress.lastError;
+      progress.inProgress = false; // Ensure it's not marked as in progress
+      await offlineAudioStorage.saveProgress(progress);
+
+      this.dispatchEvent(
+        new CustomEvent('download-error-cleared', {
+          detail: { bookHash },
+        }),
+      );
+    }
+  }
 }
 
 export const offlineAudioManager = new OfflineAudioManager();

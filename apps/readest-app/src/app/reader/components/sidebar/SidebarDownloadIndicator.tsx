@@ -75,16 +75,25 @@ const SidebarDownloadIndicator: React.FC<SidebarDownloadIndicatorProps> = ({
       }
     };
 
+    const onErrorCleared = (event: Event) => {
+      const { bookHash: eventBookHash } = (event as CustomEvent).detail;
+      if (eventBookHash === bookHash) {
+        setHasError(false);
+      }
+    };
+
     offlineAudioManager.addEventListener('download-progress', onProgress);
     offlineAudioManager.addEventListener('download-complete', onComplete);
     offlineAudioManager.addEventListener('download-error', onError);
     offlineAudioManager.addEventListener('download-deleted', onDeleted);
+    offlineAudioManager.addEventListener('download-error-cleared', onErrorCleared);
 
     return () => {
       offlineAudioManager.removeEventListener('download-progress', onProgress);
       offlineAudioManager.removeEventListener('download-complete', onComplete);
       offlineAudioManager.removeEventListener('download-error', onError);
       offlineAudioManager.removeEventListener('download-deleted', onDeleted);
+      offlineAudioManager.removeEventListener('download-error-cleared', onErrorCleared);
     };
   }, [bookHash]);
 

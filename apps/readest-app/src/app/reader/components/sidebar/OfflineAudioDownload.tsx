@@ -71,6 +71,13 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
       setIsDownloading(status.inProgress);
       if (status.inProgress && status.progress) {
         setDownloadProgress(status.progress);
+      } else if (
+        !status.inProgress &&
+        status.progress?.lastError &&
+        status.progress.lastError !== 'Download cancelled'
+      ) {
+        // setError(status.progress.lastError);
+        setError('Failed to download audio, check your network connection');
       }
 
       const dHrefs = await offlineAudioManager.getAllDownloadedSections(bookId);
@@ -108,17 +115,11 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
     };
 
     const onDownloadComplete = (event: Event) => {
-      const { bookHash, progress } = (event as CustomEvent).detail;
+      const { bookHash } = (event as CustomEvent).detail;
       if (bookHash === bookId) {
         setIsDownloading(false);
         setDownloadingHref(null);
         setDownloadProgress(null);
-
-        // Check if there were any failed sections
-        if (progress?.failedSections && progress.failedSections.length > 0) {
-          setError('Failed to download audio, check your network connection');
-        }
-
         loadStatus();
       }
     };
@@ -138,14 +139,11 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
     };
 
     const onDownloadError = (event: Event) => {
-      const { bookHash, error: err } = (event as CustomEvent).detail;
+      const { bookHash } = (event as CustomEvent).detail;
       if (bookHash === bookId) {
         setIsDownloading(false);
         setDownloadingHref(null);
         setDownloadProgress(null);
-        if (err !== 'Download cancelled') {
-          setError('Failed to download audio, check your network connection');
-        }
         loadStatus();
       }
     };
@@ -557,7 +555,13 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
         ) : error ? (
           <div className='flex flex-col gap-2'>
             <div className='alert alert-error px-2 py-2 text-xs'>{error}</div>
-            <button onClick={() => setError(null)} className='btn btn-primary btn-sm w-full'>
+            <button
+              onClick={() => {
+                setError(null);
+                offlineAudioManager.clearError(bookId);
+              }}
+              className='btn btn-primary btn-sm w-full'
+            >
               {_('Continue')}
             </button>
           </div>
