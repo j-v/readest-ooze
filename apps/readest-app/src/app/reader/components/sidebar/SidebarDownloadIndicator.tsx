@@ -91,22 +91,35 @@ const SidebarDownloadIndicator: React.FC<SidebarDownloadIndicatorProps> = ({
   if (!isDownloading && !hasError) {
     return null;
   }
-
   return (
-    <button
-      onClick={onClick}
-      className={clsx(
-        'btn btn-ghost hover:bg-base-300 h-6 min-h-6 w-6 rounded-full p-0 transition-colors',
-        hasError ? 'text-error' : 'text-primary',
-      )}
-      title={hasError ? _('Download Error') : _('Downloading Audio...')}
-    >
-      {isDownloading ? (
-        <MdDownload size={iconSize18} className='animate-bounce' />
-      ) : (
-        <MdError size={iconSize18} />
-      )}
-    </button>
+    <>
+      <style>
+        {`
+          @keyframes downloadArrow {
+            0% { transform: translateY(-2px); opacity: 0.6; }
+            50% { transform: translateY(2px); opacity: 1; }
+            100% { transform: translateY(-2px); opacity: 0.6; }
+          }
+          .animate-download-custom {
+            animation: downloadArrow 1.5s infinite ease-in-out;
+          }
+        `}
+      </style>
+      <button
+        onClick={onClick}
+        className={clsx(
+          'btn btn-ghost hover:bg-base-300 h-6 min-h-6 w-6 rounded-full p-0 transition-colors',
+          hasError ? 'text-error' : 'text-primary',
+        )}
+        title={hasError ? _('Download Error') : _('Downloading Audio...')}
+      >
+        {isDownloading ? (
+          <MdDownload size={iconSize18} className='animate-download-custom' />
+        ) : (
+          <MdError size={iconSize18} />
+        )}
+      </button>
+    </>
   );
 };
 
