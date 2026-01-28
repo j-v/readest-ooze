@@ -284,6 +284,10 @@ export class TTSController extends EventTarget {
   }
 
   async preloadNextSSML(count: number = 4) {
+    // Simple fix for offline TTS jumping highlight to preloaded paragraph, may be masking an underlying race condition
+    // between preloadNextSSML() and speak() accessing this.view.tts
+    if (this.ttsClient.name === 'offline-tts') return;
+
     const tts = this.view.tts;
     if (!tts) return;
     let preloaded = 0;
