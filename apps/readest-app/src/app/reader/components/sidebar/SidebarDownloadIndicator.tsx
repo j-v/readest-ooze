@@ -26,7 +26,11 @@ const SidebarDownloadIndicator: React.FC<SidebarDownloadIndicatorProps> = ({
         setIsDownloading(status.inProgress);
 
         // If it's not in progress, check if there was a recorded error in the last progress
-        if (!status.inProgress && status.progress?.lastError) {
+        if (
+          !status.inProgress &&
+          status.progress?.lastError &&
+          status.progress.lastError !== 'Download cancelled'
+        ) {
           setHasError(true);
         } else {
           setHasError(false);
