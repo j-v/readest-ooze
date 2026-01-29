@@ -12,7 +12,6 @@ import { eventDispatcher } from '@/utils/event';
 import { getContentMd5 } from '@/utils/misc';
 import { useTextTranslation } from '../../hooks/useTextTranslation';
 import { FlatTOCItem, StaticListRow, VirtualListRow } from './TOCItem';
-import { offlineAudioManager } from '@/services/tts/OfflineAudioManager';
 
 const getItemIdentifier = (item: TOCItem) => {
   const href = item.href || '';
@@ -48,13 +47,8 @@ const TOCView: React.FC<{
   const viewSettings = getViewSettings(bookKey)!;
   const progress = getProgress(bookKey);
 
-  // Extract stable book identifier (metaHash) instead of dynamic bookKey
-  const bookId = bookKey.split('-')[0]!;
-
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [containerHeight, setContainerHeight] = useState(400);
-  const [downloadedHrefs, setDownloadedHrefs] = useState<Set<string>>(new Set());
-  const [downloadingHrefs, setDownloadingHrefs] = useState<Set<string>>(new Set());
 
   const hasInteractedWithTOCRef = useRef(false);
   const lastInteractionTimeRef = useRef<number>(0);
@@ -159,72 +153,6 @@ const TOCView: React.FC<{
       }
     }
 
-    // Load downloaded hrefs - use batch query for efficiency
-    const loadDownloadedHrefs = async () => {
-      try {
-        await offlineAudioManager.init();
-        // Get all downloaded sections in a single query
-        const downloadedBaseHrefs = await offlineAudioManager.getAllDownloadedSections(bookId);
-        setDownloadedHrefs(downloadedBaseHrefs);
-      } catch (err) {
-        console.error('Error loading downloaded hrefs:', err);
-      }
-    };
-    loadDownloadedHrefs();
-
-    // Listen for download events to update checkmarks
-    const handleDownloadUpdate = () => {
-      loadDownloadedHrefs();
-    };
-    offlineAudioManager.addEventListener('section-download-complete', handleDownloadUpdate);
-    offlineAudioManager.addEventListener('section-download-deleted', handleDownloadUpdate);
-    // TODO may need handler for canceling download
-    offlineAudioManager.addEventListener('section-download-error', handleDownloadUpdate); // TODO validate
-
-    const handleSectionStart = (event: Event) => {
-      const { bookHash, href } = (event as CustomEvent).detail;
-      if (bookHash === bookId) {
-        setDownloadingHrefs((prev) => {
-          const next = new Set(prev);
-          next.add(href);
-          return next;
-        });
-      }
-    };
-
-    const handleSectionEnd = (event: Event) => {
-      const { bookHash, href } = (event as CustomEvent).detail;
-      if (bookHash === bookId) {
-        setDownloadingHrefs((prev) => {
-          const next = new Set(prev);
-          next.delete(href);
-          return next;
-        });
-        loadDownloadedHrefs();
-      }
-    };
-
-    const handleBatchProgress = (event: Event) => {
-      const { bookHash, href } = (event as CustomEvent).detail;
-      if (bookHash === bookId && href) {
-        // When batch downloading, completion of one section is signaled here
-        setDownloadingHrefs((prev) => {
-          const next = new Set(prev);
-          next.delete(href);
-          return next;
-        });
-        loadDownloadedHrefs();
-      }
-    };
-
-    offlineAudioManager.addEventListener('section-download-start', handleSectionStart);
-    offlineAudioManager.addEventListener('section-download-complete', handleSectionEnd);
-    offlineAudioManager.addEventListener('section-download-error', handleSectionEnd);
-    offlineAudioManager.addEventListener('section-download-deleted', handleDownloadUpdate);
-    offlineAudioManager.addEventListener('download-progress', handleBatchProgress);
-    offlineAudioManager.addEventListener('download-complete', handleDownloadUpdate);
-    offlineAudioManager.addEventListener('download-deleted', handleDownloadUpdate);
-
     return () => {
       window.removeEventListener('resize', updateHeight);
       if (resizeObserver) {
@@ -233,16 +161,8 @@ const TOCView: React.FC<{
       if (scrollContainer) {
         scrollContainer.removeEventListener('scroll', handleInteraction);
       }
-      offlineAudioManager.removeEventListener('section-download-complete', handleSectionEnd);
-      offlineAudioManager.removeEventListener('section-download-error', handleSectionEnd);
-      offlineAudioManager.removeEventListener('section-download-deleted', handleDownloadUpdate);
-      offlineAudioManager.removeEventListener('section-download-start', handleSectionStart);
-      offlineAudioManager.removeEventListener('download-progress', handleBatchProgress);
-      offlineAudioManager.removeEventListener('download-complete', handleDownloadUpdate);
-      offlineAudioManager.removeEventListener('download-deleted', handleDownloadUpdate);
     };
-    // Note: expandedItems removed from deps - checkmarks don't depend on expansion state
-  }, [handleInteraction, bookId]);
+  }, [expandedItems, handleInteraction]);
 
   const activeHref = useMemo(() => progress?.sectionHref || null, [progress?.sectionHref]);
   const flatItems = useFlattenedTOC(toc, expandedItems);
@@ -315,29 +235,17 @@ const TOCView: React.FC<{
     return window.innerWidth >= 640 && !viewSettings?.translationEnabled ? 37 : 57;
   }, [viewSettings?.translationEnabled]);
 
-  const virtualListData = useMemo(() => {
-    const data = {
+  const virtualListData = useMemo(
+    () => ({
       flatItems,
       itemSize: virtualItemSize,
       bookKey,
       activeHref,
-      downloadedHrefs,
-      downloadingHrefs,
       onToggleExpand: handleToggleExpand,
       onItemClick: handleItemClick,
-    };
-
-    return data;
-  }, [
-    flatItems,
-    virtualItemSize,
-    bookKey,
-    activeHref,
-    downloadedHrefs,
-    downloadingHrefs,
-    handleToggleExpand,
-    handleItemClick,
-  ]);
+    }),
+    [flatItems, virtualItemSize, bookKey, activeHref, handleToggleExpand, handleItemClick],
+  );
 
   useEffect(() => {
     if (!progress) return;
@@ -360,49 +268,43 @@ const TOCView: React.FC<{
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [progress, scrollToActiveItem, isInCooldown]);
 
-  return (
-    <>
-      {sections && sections.length > 256 ? (
-        <div
-          className='virtual-list mt-2 rounded'
-          data-overlayscrollbars-initialize=''
-          ref={containerRef}
-        >
-          <VirtualList
-            ref={vitualListRef}
-            outerRef={listOuterRef}
-            width='100%'
-            height={containerHeight}
-            itemCount={flatItems.length}
-            itemSize={virtualItemSize}
-            itemData={virtualListData}
-            overscanCount={20}
-            initialScrollOffset={
-              appService?.isAndroidApp && activeItemIndex >= 0
-                ? Math.max(0, activeItemIndex * virtualItemSize - containerHeight / 2)
-                : undefined
-            }
-          >
-            {VirtualListRow}
-          </VirtualList>
-        </div>
-      ) : (
-        <div className='static-list mt-2 rounded' ref={staticListRef}>
-          {flatItems.map((flatItem, index) => (
-            <StaticListRow
-              key={`static-row-${index}`}
-              bookKey={bookKey}
-              flatItem={flatItem}
-              activeHref={activeHref}
-              downloadedHrefs={downloadedHrefs}
-              downloadingHrefs={downloadingHrefs}
-              onToggleExpand={handleToggleExpand}
-              onItemClick={handleItemClick}
-            />
-          ))}
-        </div>
-      )}
-    </>
+  return sections && sections.length > 256 ? (
+    <div
+      className='virtual-list mt-2 rounded'
+      data-overlayscrollbars-initialize=''
+      ref={containerRef}
+    >
+      <VirtualList
+        ref={vitualListRef}
+        outerRef={listOuterRef}
+        width='100%'
+        height={containerHeight}
+        itemCount={flatItems.length}
+        itemSize={virtualItemSize}
+        itemData={virtualListData}
+        overscanCount={20}
+        initialScrollOffset={
+          appService?.isAndroidApp && activeItemIndex >= 0
+            ? Math.max(0, activeItemIndex * virtualItemSize - containerHeight / 2)
+            : undefined
+        }
+      >
+        {VirtualListRow}
+      </VirtualList>
+    </div>
+  ) : (
+    <div className='static-list mt-2 rounded' ref={staticListRef}>
+      {flatItems.map((flatItem, index) => (
+        <StaticListRow
+          key={`static-row-${index}`}
+          bookKey={bookKey}
+          flatItem={flatItem}
+          activeHref={activeHref}
+          onToggleExpand={handleToggleExpand}
+          onItemClick={handleItemClick}
+        />
+      ))}
+    </div>
   );
 };
 export default TOCView;

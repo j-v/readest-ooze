@@ -1,8 +1,6 @@
 import clsx from 'clsx';
 import React, { useCallback } from 'react';
 import { ListChildComponentProps } from 'react-window';
-import { MdCheckCircle } from 'react-icons/md';
-import { RiLoader2Line } from 'react-icons/ri';
 import { TOCItem } from '@/libs/document';
 import { getContentMd5 } from '@/utils/misc';
 
@@ -36,11 +34,9 @@ const TOCItemView = React.memo<{
   flatItem: FlatTOCItem;
   itemSize?: number;
   isActive: boolean;
-  isDownloaded?: boolean;
-  isDownloading?: boolean;
   onToggleExpand: (item: TOCItem) => void;
   onItemClick: (item: TOCItem) => void;
-}>(({ flatItem, itemSize, isActive, isDownloaded, isDownloading, onToggleExpand, onItemClick }) => {
+}>(({ flatItem, itemSize, isActive, onToggleExpand, onItemClick }) => {
   const { item, depth } = flatItem;
 
   const handleToggleExpand = useCallback(
@@ -105,16 +101,6 @@ const TOCItemView = React.memo<{
       >
         {item.label}
       </div>
-      {isDownloaded && (
-        <MdCheckCircle
-          className='text-success ms-2 flex-shrink-0'
-          title='Downloaded for offline listening'
-          size={16}
-        />
-      )}
-      {isDownloading && (
-        <RiLoader2Line className='text-primary ms-2 flex-shrink-0 animate-spin' size={16} />
-      )}
       {item.location && (
         <div className='text-base-content/50 ms-auto ps-1 text-xs sm:pe-1'>
           {item.location.current + 1}
@@ -125,13 +111,12 @@ const TOCItemView = React.memo<{
 });
 
 TOCItemView.displayName = 'TOCItemView';
+
 interface ListRowProps {
   bookKey: string;
   flatItem: FlatTOCItem;
   itemSize?: number;
   activeHref: string | null;
-  downloadedHrefs?: Set<string>;
-  downloadingHrefs?: Set<string>;
   onToggleExpand: (item: TOCItem) => void;
   onItemClick: (item: TOCItem) => void;
 }
@@ -141,14 +126,10 @@ export const StaticListRow: React.FC<ListRowProps> = ({
   flatItem,
   itemSize,
   activeHref,
-  downloadedHrefs,
-  downloadingHrefs,
   onToggleExpand,
   onItemClick,
 }) => {
   const isActive = activeHref === flatItem.item.href;
-  const isDownloaded = downloadedHrefs?.has(flatItem.item.href) || false;
-  const isDownloading = downloadingHrefs?.has(flatItem.item.href) || false;
 
   return (
     <div
@@ -163,8 +144,6 @@ export const StaticListRow: React.FC<ListRowProps> = ({
         flatItem={flatItem}
         itemSize={itemSize}
         isActive={isActive}
-        isDownloaded={isDownloaded}
-        isDownloading={isDownloading}
         onToggleExpand={onToggleExpand}
         onItemClick={onItemClick}
       />
@@ -179,23 +158,12 @@ export const VirtualListRow: React.FC<
       flatItems: FlatTOCItem[];
       itemSize: number;
       activeHref: string | null;
-      downloadedHrefs?: Set<string>;
-      downloadingHrefs?: Set<string>;
       onToggleExpand: (item: TOCItem) => void;
       onItemClick: (item: TOCItem) => void;
     };
   }
 > = ({ index, style, data }) => {
-  const {
-    flatItems,
-    bookKey,
-    activeHref,
-    itemSize,
-    downloadedHrefs,
-    downloadingHrefs,
-    onToggleExpand,
-    onItemClick,
-  } = data;
+  const { flatItems, bookKey, activeHref, itemSize, onToggleExpand, onItemClick } = data;
   const flatItem = flatItems[index];
 
   return (
@@ -205,8 +173,6 @@ export const VirtualListRow: React.FC<
         flatItem={flatItem}
         itemSize={itemSize - 1}
         activeHref={activeHref}
-        downloadedHrefs={downloadedHrefs}
-        downloadingHrefs={downloadingHrefs}
         onToggleExpand={onToggleExpand}
         onItemClick={onItemClick}
       />
