@@ -126,7 +126,6 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
   const [voiceGroups, setVoiceGroups] = useState<TTSVoicesGroup[]>([]);
   const [selectedVoiceId, setSelectedVoiceId] = useState<string>('');
   const [downloadedVoiceId, setDownloadedVoiceId] = useState<string | null>(null);
-  const [showVoiceConfirm, setShowVoiceConfirm] = useState(false);
 
   const bookData = getBookData(bookKey);
   const viewSettings = getViewSettings(bookKey);
@@ -345,15 +344,6 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
     setPivotIndex(null);
   };
 
-  const handleSelectMissing = () => {
-    if (isDownloading) return;
-    const missing = flatTOC
-      .filter((x) => !downloadedHrefs.has(x.item.href || ''))
-      .map((x) => x.item.href || '');
-    setSelection(new Set(missing));
-    setPivotIndex(null);
-  };
-
   const handleSelectUnread = () => {
     if (isDownloading) return;
     const currentIndex = flatTOC.findIndex((x) => x.item.href === currentSectionHref);
@@ -386,19 +376,12 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
 
   const handleDownloadSelected = async () => {
     if (!bookDoc || isDownloading) return;
-
-    if (downloadedVoiceId && selectedVoiceId && downloadedVoiceId !== selectedVoiceId) {
-      setShowVoiceConfirm(true);
-      return;
-    }
-
     startDownloadBatch();
   };
 
   const startDownloadBatch = async () => {
     setError(null);
     setIsDownloading(true);
-    setShowVoiceConfirm(false);
 
     const selectedItems = flatTOC
       .filter((x) => selection.has(x.item.href || '') && !downloadedHrefs.has(x.item.href || ''))
@@ -574,14 +557,6 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
         </button>
         <div className='divider divider-horizontal mx-0'></div>
         <button
-          onClick={handleSelectMissing}
-          disabled={isDownloading}
-          className='hover:text-primary'
-        >
-          {_('Missing')}
-        </button>
-        <div className='divider divider-horizontal mx-0'></div>
-        <button
           onClick={handleSelectUnread}
           disabled={isDownloading}
           className='hover:text-primary'
@@ -611,20 +586,6 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
       </div>
       {/* FOOTER */}
       <div className='border-base-200 flex-shrink-0 border-t p-4'>
-        {showVoiceConfirm && (
-          <div className='alert alert-warning mb-2 p-2 text-xs'>
-            <span>{_('Changing voice will delete existing audio.')}</span>
-            <div className='mt-1 flex gap-2'>
-              <button onClick={startDownloadBatch} className='btn btn-xs btn-error'>
-                {_('Proceed')}
-              </button>
-              <button onClick={() => setShowVoiceConfirm(false)} className='btn btn-xs btn-ghost'>
-                {_('Cancel')}
-              </button>
-            </div>
-          </div>
-        )}
-
         {isDownloading ? (
           <div className='flex flex-col gap-2'>
             {downloadProgress && (
