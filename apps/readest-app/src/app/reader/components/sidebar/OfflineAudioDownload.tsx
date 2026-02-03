@@ -243,6 +243,18 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
     setSelection(new Set(missing));
   };
 
+  const handleSelectUnread = () => {
+    if (isDownloading) return;
+    const currentIndex = flatTOC.findIndex((x) => x.item.href === currentSectionHref);
+    if (currentIndex === -1) return;
+
+    const unread = flatTOC
+      .slice(currentIndex)
+      .filter((x) => !downloadedHrefs.has(x.item.href || ''))
+      .map((x) => x.item.href || '');
+    setSelection(new Set(unread));
+  };
+
   const getTTSTargetLang = useCallback((): string | undefined => {
     const ttsReadAloudText = viewSettings?.ttsReadAloudText;
     if (viewSettings?.translationEnabled && ttsReadAloudText === 'translated') {
@@ -463,6 +475,14 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
           className='hover:text-primary'
         >
           {_('Missing')}
+        </button>
+        <div className='divider divider-horizontal mx-0'></div>
+        <button
+          onClick={handleSelectUnread}
+          disabled={isDownloading}
+          className='hover:text-primary'
+        >
+          {_('Unread')}
         </button>
       </div>
       {/* LIST */}
