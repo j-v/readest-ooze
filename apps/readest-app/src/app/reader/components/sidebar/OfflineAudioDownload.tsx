@@ -19,7 +19,7 @@ interface OfflineAudioDownloadProps {
 
 const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, onClose }) => {
   const _ = useTranslation();
-  const { getView, getViewSettings } = useReaderStore();
+  const { getViewSettings } = useReaderStore();
   const { getBookData } = useBookDataStore();
 
   const [isDownloading, setIsDownloading] = useState(false);
@@ -38,9 +38,9 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
   const [downloadedVoiceId, setDownloadedVoiceId] = useState<string | null>(null);
   const [showVoiceConfirm, setShowVoiceConfirm] = useState(false);
 
-  const view = getView(bookKey);
+  const bookData = getBookData(bookKey);
   const viewSettings = getViewSettings(bookKey);
-  const bookDoc = view?.book || null;
+  const bookDoc = bookData?.bookDoc || null;
   const bookId = bookKey.split('-')[0]!;
   const ttsLang = useBookLanguage(bookKey);
 
@@ -178,7 +178,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
   // Voice Loading
   useEffect(() => {
     const loadVoices = async () => {
-      if (!bookDoc || !view) return;
+      if (!bookDoc) return;
       const groups = await offlineAudioManager.getVoices(ttsLang);
       setVoiceGroups(groups);
 
@@ -202,7 +202,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
       }
     };
     loadVoices();
-  }, [bookDoc, view, bookKey, downloadedVoiceId, selectedVoiceId, viewSettings?.ttsVoice, ttsLang]);
+  }, [bookDoc, bookKey, downloadedVoiceId, selectedVoiceId, viewSettings?.ttsVoice, ttsLang]);
 
   // Actions
   const handleToggleSelection = (href: string) => {
