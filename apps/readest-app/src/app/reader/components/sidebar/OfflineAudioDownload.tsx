@@ -19,7 +19,7 @@ interface OfflineAudioDownloadProps {
 
 const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, onClose }) => {
   const _ = useTranslation();
-  const { getViewSettings } = useReaderStore();
+  const { getViewSettings, getProgress } = useReaderStore();
   const { getBookData } = useBookDataStore();
 
   const [isDownloading, setIsDownloading] = useState(false);
@@ -43,6 +43,9 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
   const bookDoc = bookData?.bookDoc || null;
   const bookId = bookKey.split('-')[0]!;
   const ttsLang = useBookLanguage(bookKey);
+  const currentSectionHref = getProgress(bookKey)?.sectionHref;
+
+  const currentChapterRef = useRef<HTMLLIElement>(null);
 
   // Flatten TOC for checklist
   const flatTOC = useMemo(() => {
@@ -174,6 +177,13 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
   useEffect(() => {
     loadStatus();
   }, [loadStatus]);
+
+  // Scroll to current chapter
+  useEffect(() => {
+    if (currentChapterRef.current) {
+      currentChapterRef.current.scrollIntoView({ behavior: 'auto', block: 'center' });
+    }
+  }, [currentSectionHref, flatTOC.length]); // Scroll when current section changes or TOC is loaded
 
   // Voice Loading
   useEffect(() => {
@@ -463,13 +473,15 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
             const isDownloaded = downloadedHrefs.has(href);
             const isSelected = selection.has(href);
             const isActive = downloadingHref === href;
+            const isCurrent = currentSectionHref === href;
 
             return (
-              <li key={href}>
+              <li key={href} ref={isCurrent ? currentChapterRef : null}>
                 <label
                   className={clsx(
                     'flex h-auto cursor-pointer items-center justify-between rounded-none py-3 pr-4',
                     isSelected && 'bg-base-200',
+                    isCurrent && 'bg-primary/10 border-l-primary border-l-4',
                   )}
                 >
                   <div className='flex items-center gap-3 overflow-hidden'>
@@ -485,6 +497,11 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
                     <span className='truncate' style={{ paddingLeft: `${depth * 12}px` }}>
                       {item.label || href}
                     </span>
+                    {isCurrent && (
+                      <span className='badge badge-primary badge-xs py-2 uppercase tracking-wide opacity-80'>
+                        {_('Current')}
+                      </span>
+                    )}
                   </div>
 
                   {/* Status Icon */}

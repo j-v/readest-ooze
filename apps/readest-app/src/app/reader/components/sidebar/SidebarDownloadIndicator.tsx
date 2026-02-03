@@ -5,6 +5,7 @@ import { useResponsiveSize } from '@/hooks/useResponsiveSize';
 import clsx from 'clsx';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useReaderStore } from '@/store/readerStore';
+import { useSidebarStore } from '@/store/sidebarStore';
 
 interface SidebarDownloadIndicatorProps {
   bookHash: string;
@@ -12,6 +13,7 @@ interface SidebarDownloadIndicatorProps {
 
 const SidebarDownloadIndicator: React.FC<SidebarDownloadIndicatorProps> = ({ bookHash }) => {
   const { setShowOfflineAudioDownload } = useReaderStore();
+  const { sideBarBookKey } = useSidebarStore();
   const [isDownloading, setIsDownloading] = useState(false);
   const [hasError, setHasError] = useState(false);
   const iconSize18 = useResponsiveSize(18);
@@ -117,7 +119,7 @@ const SidebarDownloadIndicator: React.FC<SidebarDownloadIndicatorProps> = ({ boo
         `}
       </style>
       <button
-        onClick={() => setShowOfflineAudioDownload(bookHash)}
+        onClick={() => setShowOfflineAudioDownload(sideBarBookKey)}
         className={clsx(
           'btn btn-ghost hover:bg-base-300 h-6 min-h-6 w-6 rounded-full p-0 transition-colors',
           hasError ? 'text-error' : 'text-primary',
