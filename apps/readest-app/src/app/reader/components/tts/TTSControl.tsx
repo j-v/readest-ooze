@@ -51,6 +51,7 @@ const TTSControl: React.FC<TTSControlProps> = ({ bookKey, gridInsets }) => {
   const [ttsLang, setTtsLang] = useState<string>('en');
   const [isPlaying, setIsPlaying] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
   const [showIndicator, setShowIndicator] = useState(false);
   const [showPanel, setShowPanel] = useState(false);
   const [showTTSBar, setShowTTSBar] = useState(() => !!viewSettings?.showTTSBar);
@@ -257,13 +258,20 @@ const TTSControl: React.FC<TTSControlProps> = ({ bookKey, gridInsets }) => {
       }
     };
 
+    const handleClientChange = (e: Event) => {
+      const { isOffline } = (e as CustomEvent).detail;
+      setIsOffline(isOffline);
+    };
+
     ttsController.addEventListener('tts-need-auth', handleNeedAuth);
     ttsController.addEventListener('tts-speak-mark', handleSpeakMark);
     ttsController.addEventListener('tts-highlight-mark', handleHighlightMark);
+    ttsController.addEventListener('tts-client-change', handleClientChange);
     return () => {
       ttsController.removeEventListener('tts-need-auth', handleNeedAuth);
       ttsController.removeEventListener('tts-speak-mark', handleSpeakMark);
       ttsController.removeEventListener('tts-highlight-mark', handleHighlightMark);
+      ttsController.removeEventListener('tts-client-change', handleClientChange);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ttsController, bookKey]);
@@ -425,6 +433,9 @@ const TTSControl: React.FC<TTSControlProps> = ({ bookKey, gridInsets }) => {
         ttsController.setTargetLang(getTTSTargetLang() || '');
       }
       setTtsClientsInitialized(true);
+      if (ttsController.ttsClient?.name === 'offline-tts') {
+        setIsOffline(true);
+      }
       setTTSEnabled(bookKey, true);
     } catch (error) {
       eventDispatcher.dispatch('toast', {
@@ -730,7 +741,12 @@ const TTSControl: React.FC<TTSControlProps> = ({ bookKey, gridInsets }) => {
               : undefined,
           }}
         >
-          <TTSIcon isPlaying={isPlaying} ttsInited={ttsClientsInited} onClick={togglePopup} />
+          <TTSIcon
+            isPlaying={isPlaying}
+            ttsInited={ttsClientsInited}
+            isOffline={isOffline}
+            onClick={togglePopup}
+          />
         </div>
       )}
       {showPanel && panelPosition && trianglePosition && ttsClientsInited && (

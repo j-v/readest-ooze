@@ -144,6 +144,7 @@ export class TTSController extends EventTarget {
         this.ttsClient = preferredClient;
       }
     }
+    this.dispatchClientChange();
     this.ttsWebVoices = await this.ttsWebClient.getAllVoices();
     this.ttsEdgeVoices = await this.ttsEdgeClient.getAllVoices();
   }
@@ -187,6 +188,7 @@ export class TTSController extends EventTarget {
       // const currentClient = this.ttsClient;
       this.ttsClient = this.ttsOfflineClient;
       await this.ttsClient.setRate(this.ttsRate);
+      this.dispatchClientChange();
       console.log('Switched to offline TTS - audio available for section');
       return true;
     }
@@ -253,6 +255,7 @@ export class TTSController extends EventTarget {
         this.ttsClient = this.ttsWebClient;
       }
       await this.ttsClient.setRate(this.ttsRate);
+      this.dispatchClientChange();
       console.log('Switched back to online TTS:', this.ttsClient.name);
     }
   }
@@ -576,6 +579,7 @@ export class TTSController extends EventTarget {
     }
     TTSUtils.setPreferredClient(this.ttsClient.name);
     TTSUtils.setPreferredVoice(this.ttsClient.name, lang, voiceId);
+    this.dispatchClientChange();
     await this.ttsClient.setVoice(voiceId);
   }
 
@@ -597,6 +601,17 @@ export class TTSController extends EventTarget {
       const range = this.view.tts?.setMark(mark.name);
       this.dispatchEvent(new CustomEvent('tts-highlight-mark', { detail: range }));
     }
+  }
+
+  dispatchClientChange() {
+    this.dispatchEvent(
+      new CustomEvent('tts-client-change', {
+        detail: {
+          clientName: this.ttsClient.name,
+          isOffline: this.ttsClient.name === 'offline-tts',
+        },
+      }),
+    );
   }
 
   error(e: unknown) {
