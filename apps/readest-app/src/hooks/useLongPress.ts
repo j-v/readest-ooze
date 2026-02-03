@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 interface UseLongPressOptions {
-  onTap?: () => void;
-  onLongPress?: () => void;
-  onContextMenu?: () => void;
+  onTap?: (e?: React.PointerEvent | React.MouseEvent) => void;
+  onLongPress?: (e?: React.PointerEvent) => void;
+  onContextMenu?: (e?: React.MouseEvent) => void;
   onCancel?: () => void;
   threshold?: number;
   moveThreshold?: number;
@@ -40,6 +40,7 @@ export const useLongPress = (
   const hasPointerEventsRef = useRef(false);
   const pointerEventTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
   const isLongPressTriggered = useRef(false);
+  const pointerEventRef = useRef<React.PointerEvent | null>(null);
 
   const reset = useCallback(() => {
     setPressing(false);
@@ -61,12 +62,13 @@ export const useLongPress = (
       pointerId.current = e.pointerId;
       startPosRef.current = { x: e.clientX, y: e.clientY };
       isLongPressTriggered.current = false;
+      pointerEventRef.current = e;
       setPressing(true);
 
       timerRef.current = setTimeout(() => {
         if (startPosRef.current) {
           isLongPressTriggered.current = true;
-          onLongPress?.();
+          onLongPress?.(pointerEventRef.current || undefined);
           setPressing(false);
         }
       }, threshold);
@@ -98,7 +100,7 @@ export const useLongPress = (
         const deltaY = Math.abs(e.clientY - startPosRef.current.y);
 
         if (deltaX <= moveThreshold && deltaY <= moveThreshold) {
-          onTap?.();
+          onTap?.(e);
         }
       }
 
@@ -124,19 +126,22 @@ export const useLongPress = (
     [onCancel, reset],
   );
 
-  const handleClick = useCallback(() => {
-    // This is only for aria activation, if the user has used pointer events, we ignore the click event
-    if (!hasPointerEventsRef.current) {
-      onTap?.();
-    }
-  }, [onTap]);
+  const handleClick = useCallback(
+    (e: React.MouseEvent) => {
+      // This is only for aria activation, if the user has used pointer events, we ignore the click event
+      if (!hasPointerEventsRef.current) {
+        onTap?.(e);
+      }
+    },
+    [onTap],
+  );
 
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
       if (onContextMenu) {
         e.preventDefault();
         e.stopPropagation();
-        onContextMenu();
+        onContextMenu(e);
       }
       reset();
     },

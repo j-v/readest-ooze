@@ -11,11 +11,100 @@ import { getLocale } from '@/utils/misc';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useBookLanguage } from '@/hooks/useBookLanguage';
 import { TOCItem } from '@/libs/document';
+import { useLongPress } from '@/hooks/useLongPress';
 
 interface OfflineAudioDownloadProps {
   bookKey: string;
   onClose?: () => void;
 }
+
+interface TOCDownloadItemProps {
+  item: TOCItem;
+  depth: number;
+  index: number;
+  isSelected: boolean;
+  isDownloaded: boolean;
+  isActive: boolean;
+  isCurrent: boolean;
+  isDownloading: boolean;
+  onToggle: (href: string, index: number, isShift?: boolean) => void;
+  innerRef?: React.Ref<HTMLLIElement>;
+}
+
+const TOCDownloadItem: React.FC<TOCDownloadItemProps> = ({
+  item,
+  depth,
+  index,
+  isSelected,
+  isDownloaded,
+  isActive,
+  isCurrent,
+  isDownloading,
+  onToggle,
+  innerRef,
+}) => {
+  const _ = useTranslation();
+  const href = item.href || '';
+
+  const { handlers, pressing } = useLongPress(
+    {
+      onTap: (e) => onToggle(href, index, e?.shiftKey),
+      onLongPress: () => onToggle(href, index, true),
+    },
+    [href, index, onToggle],
+  );
+
+  return (
+    <li ref={innerRef}>
+      <div
+        role='button'
+        className={clsx(
+          'focus:bg-base-300 flex h-auto cursor-pointer items-center justify-between rounded-none py-3 pr-4 outline-none transition-colors',
+          isSelected && 'bg-base-200',
+          isCurrent && 'bg-primary/10 border-l-primary border-l-4',
+          pressing && 'bg-base-300',
+        )}
+        {...handlers}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onToggle(href, index);
+          }
+        }}
+        tabIndex={0}
+      >
+        <div className='flex items-center gap-3 overflow-hidden'>
+          <input
+            type='checkbox'
+            className='checkbox checkbox-sm checkbox-primary pointer-events-none'
+            checked={isSelected}
+            readOnly
+            disabled={isDownloading}
+          />
+
+          <span className='truncate' style={{ paddingLeft: `${depth * 12}px` }}>
+            {item.label || href}
+          </span>
+          {isCurrent && (
+            <span className='badge badge-primary badge-xs py-2 uppercase tracking-wide opacity-80'>
+              {_('Current')}
+            </span>
+          )}
+        </div>
+
+        <div className='flex-shrink-0'>
+          {isActive ? (
+            <span className='loading loading-spinner loading-xs text-primary'></span>
+          ) : isDownloaded ? (
+            <MdDownload className='text-lg opacity-50' />
+          ) : (
+            <div className='border-base-300 h-4 w-4 rounded-full border-2'></div>
+          )}
+        </div>
+      </div>
+    </li>
+  );
+};
 
 const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, onClose }) => {
   const _ = useTranslation();
@@ -31,7 +120,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [downloadedHrefs, setDownloadedHrefs] = useState<Set<string>>(new Set());
   const [downloadingHref, setDownloadingHref] = useState<string | null>(null);
-  const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
+  const [pivotIndex, setPivotIndex] = useState<number | null>(null);
 
   // Voice selection state
   const [voiceGroups, setVoiceGroups] = useState<TTSVoicesGroup[]>([]);
@@ -80,7 +169,6 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
         status.progress?.lastError &&
         status.progress.lastError !== 'Download cancelled'
       ) {
-        // setError(status.progress.lastError);
         setError('Failed to download audio, check your network connection');
       }
 
@@ -128,7 +216,6 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
       }
     };
 
-    // Also listen for single section completions to update checkmarks immediately
     const onSectionComplete = (event: Event) => {
       const { bookHash, href } = (event as CustomEvent).detail;
       if (bookHash === bookId) {
@@ -138,7 +225,6 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
           return next;
         });
         setDownloadingHref(null);
-        // If we are tracking batch progress, we might want to reload total size occasionally
       }
     };
 
@@ -157,13 +243,12 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
       if (bookHash === bookId) loadStatus();
     };
 
-    // TODO duplicate handlers?
     offlineAudioManager.addEventListener('download-progress', onDownloadProgress);
     offlineAudioManager.addEventListener('download-complete', onDownloadComplete);
     offlineAudioManager.addEventListener('download-error', onDownloadError);
     offlineAudioManager.addEventListener('section-download-complete', onSectionComplete);
     offlineAudioManager.addEventListener('download-deleted', onDeleted);
-    offlineAudioManager.addEventListener('section-download-deleted', onDeleted); // Handle section deletes
+    offlineAudioManager.addEventListener('section-download-deleted', onDeleted);
 
     return () => {
       offlineAudioManager.removeEventListener('download-progress', onDownloadProgress);
@@ -184,7 +269,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
     if (currentChapterRef.current) {
       currentChapterRef.current.scrollIntoView({ behavior: 'auto', block: 'center' });
     }
-  }, [currentSectionHref, flatTOC.length]); // Scroll when current section changes or TOC is loaded
+  }, [currentSectionHref, flatTOC.length]);
 
   // Voice Loading
   useEffect(() => {
@@ -220,33 +305,44 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
     if (isDownloading) return;
     setSelection((prev) => {
       const next = new Set(prev);
-      if (isShift && lastSelectedIndex !== null) {
-        const start = Math.min(lastSelectedIndex, index);
-        const end = Math.max(lastSelectedIndex, index);
-        const rangeHrefs = flatTOC.slice(start, end + 1).map((x) => x.item.href || '');
+      if (isShift && pivotIndex !== null && flatTOC[pivotIndex]) {
+        const start = Math.min(pivotIndex, index);
+        const end = Math.max(pivotIndex, index);
 
-        const shouldSelect = !prev.has(href);
-        rangeHrefs.forEach((h) => {
-          if (shouldSelect) next.add(h);
-          else next.delete(h);
-        });
+        // Use the pivot item's state to determine the target state for the range
+        const pivotHref = flatTOC[pivotIndex]?.item?.href || '';
+        const shouldSelect = prev.has(pivotHref);
+
+        for (let i = start; i <= end; i++) {
+          const h = flatTOC[i]?.item.href;
+          if (h) {
+            if (shouldSelect) next.add(h);
+            else next.delete(h);
+          }
+        }
       } else {
-        if (next.has(href)) next.delete(href);
-        else next.add(href);
+        if (next.has(href)) {
+          next.delete(href);
+        } else {
+          next.add(href);
+        }
       }
+
+      setPivotIndex(index);
       return next;
     });
-    setLastSelectedIndex(index);
   };
 
   const handleSelectAll = () => {
     if (isDownloading) return;
     setSelection(new Set(flatTOC.map((x) => x.item.href || '')));
+    setPivotIndex(null);
   };
 
   const handleSelectNone = () => {
     if (isDownloading) return;
     setSelection(new Set());
+    setPivotIndex(null);
   };
 
   const handleSelectMissing = () => {
@@ -255,6 +351,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
       .filter((x) => !downloadedHrefs.has(x.item.href || ''))
       .map((x) => x.item.href || '');
     setSelection(new Set(missing));
+    setPivotIndex(null);
   };
 
   const handleSelectUnread = () => {
@@ -267,6 +364,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
       .filter((x) => !downloadedHrefs.has(x.item.href || ''))
       .map((x) => x.item.href || '');
     setSelection(new Set(unread));
+    setPivotIndex(null);
   };
 
   const getTTSTargetLang = useCallback((): string | undefined => {
@@ -274,8 +372,8 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
     if (viewSettings?.translationEnabled && ttsReadAloudText === 'translated') {
       return viewSettings?.translateTargetLang || getLocale();
     } else if (viewSettings?.translationEnabled && ttsReadAloudText === 'source') {
-      const bookData = getBookData(bookKey);
-      return bookData?.book?.primaryLanguage || '';
+      const bData = getBookData(bookKey);
+      return bData?.book?.primaryLanguage || '';
     }
     return undefined;
   }, [
@@ -289,7 +387,6 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
   const handleDownloadSelected = async () => {
     if (!bookDoc || isDownloading) return;
 
-    // Check voice
     if (downloadedVoiceId && selectedVoiceId && downloadedVoiceId !== selectedVoiceId) {
       setShowVoiceConfirm(true);
       return;
@@ -303,7 +400,6 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
     setIsDownloading(true);
     setShowVoiceConfirm(false);
 
-    // Filter selection to TOC Items
     const selectedItems = flatTOC
       .filter((x) => selection.has(x.item.href || '') && !downloadedHrefs.has(x.item.href || ''))
       .map((x) => x.item);
@@ -323,7 +419,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
     const targetLang = getTTSTargetLang();
 
     // Note: If voice changed, we might need to delete old stuff first.
-    // Existing logic in old component did this.
+    // logic in old component did this.
     // if (downloadedVoiceId && downloadedVoiceId !== selectedVoiceId) {
     //   try {
     //     await offlineAudioManager.deleteBook(bookId);
@@ -362,10 +458,9 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
     const toDelete = Array.from(selection).filter((href) => downloadedHrefs.has(href));
     if (toDelete.length === 0) return;
 
-    setIsDownloading(true); // Lock UI
+    setIsDownloading(true);
     try {
       await offlineAudioManager.deleteSections(bookId, toDelete);
-      // Manually update local state for speed, though event listener will also fire
       setDownloadedHrefs((prev) => {
         const next = new Set(prev);
         toDelete.forEach((h) => next.delete(h));
@@ -381,7 +476,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
 
   const handleCancel = () => {
     offlineAudioManager.cancelDownload(bookId);
-    setIsDownloading(false); // optimistic update
+    setIsDownloading(false);
     setDownloadingHref(null);
   };
 
@@ -395,7 +490,6 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
 
   const voiceDropdownRef = useRef<HTMLDetailsElement>(null);
 
-  // Computed states for buttons
   const isSelectionEmpty = selection.size === 0;
   const hasMissingInSelection = Array.from(selection).some((h) => !downloadedHrefs.has(h));
   const hasDownloadedInSelection = Array.from(selection).some((h) => downloadedHrefs.has(h));
@@ -405,7 +499,6 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
 
   return (
     <div className='bg-base-100 border-base-200 flex h-[80vh] max-h-[600px] w-full max-w-md flex-col rounded-lg border shadow-lg'>
-      {/* HEADER */}
       <div className='border-base-200 flex-shrink-0 border-b p-4 pb-2'>
         <div className='mb-2 flex items-center justify-between'>
           <h3 className='flex items-center gap-2 text-lg font-semibold'>
@@ -419,14 +512,12 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
           )}
         </div>
 
-        {/* Stats & Tools */}
         <div className='mb-2 flex items-center justify-between text-xs opacity-70'>
           <span>
             {downloadedHrefs.size} / {flatTOC.length} {_('Downloaded')} ({formatSize(totalSize)})
           </span>
         </div>
 
-        {/* Voice Selection */}
         <details ref={voiceDropdownRef} className='dropdown dropdown-bottom w-full'>
           <summary
             className={clsx(
@@ -443,7 +534,6 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
             </div>
             <MdDownload className='rotate-90 text-xs' />
           </summary>
-          {/* ... Dropdown content (same as before) ... */}
           <ul className='dropdown-content menu bg-base-100 rounded-box z-[1] block max-h-60 w-full flex-nowrap overflow-y-auto p-2 shadow'>
             {voiceGroups.map((group) => (
               <React.Fragment key={group.id}>
@@ -473,7 +563,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
           </ul>
         </details>
       </div>
-      {/* TOOLBAR */}
+
       <div className='bg-base-200/50 border-base-200 flex flex-shrink-0 gap-2 border-b px-4 py-2 text-xs'>
         <button onClick={handleSelectAll} disabled={isDownloading} className='hover:text-primary'>
           {_('Select All')}
@@ -499,80 +589,28 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
           {_('Unread')}
         </button>
       </div>
-      {/* LIST */}
+
       <div className='flex-1 overflow-y-auto p-0'>
         <ul className='menu menu-sm w-full p-0'>
-          {flatTOC.map(({ item, depth }, index) => {
-            const href = item.href || '';
-            const isDownloaded = downloadedHrefs.has(href);
-            const isSelected = selection.has(href);
-            const isActive = downloadingHref === href;
-            const isCurrent = currentSectionHref === href;
-
-            return (
-              <li key={href} ref={isCurrent ? currentChapterRef : null}>
-                <label
-                  className={clsx(
-                    'flex h-auto cursor-pointer items-center justify-between rounded-none py-3 pr-4',
-                    isSelected && 'bg-base-200',
-                    isCurrent && 'bg-primary/10 border-l-primary border-l-4',
-                  )}
-                  onClick={(e) => {
-                    if (e.shiftKey) {
-                      e.preventDefault();
-                      handleToggleSelection(href, index, true);
-                    }
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      // Normal toggle for keyboard
-                      handleToggleSelection(href, index);
-                    }
-                  }}
-                >
-                  <div className='flex items-center gap-3 overflow-hidden'>
-                    {/* Checkbox */}
-                    <input
-                      type='checkbox'
-                      className='checkbox checkbox-sm checkbox-primary'
-                      checked={isSelected}
-                      onChange={() => {
-                        // We handle shiftKey in label.onClick.
-                        // If it's a normal click/keyboard toggle, we handle it here.
-                        handleToggleSelection(href, index);
-                      }}
-                      disabled={isDownloading}
-                    />
-
-                    <span className='truncate' style={{ paddingLeft: `${depth * 12}px` }}>
-                      {item.label || href}
-                    </span>
-                    {isCurrent && (
-                      <span className='badge badge-primary badge-xs py-2 uppercase tracking-wide opacity-80'>
-                        {_('Current')}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Status Icon */}
-                  <div className='flex-shrink-0'>
-                    {isActive ? (
-                      <span className='loading loading-spinner loading-xs text-primary'></span>
-                    ) : isDownloaded ? (
-                      <MdDownload className='text-lg opacity-50' />
-                    ) : (
-                      <div className='border-base-300 h-4 w-4 rounded-full border-2'></div>
-                    )}
-                  </div>
-                </label>
-              </li>
-            );
-          })}
+          {flatTOC.map(({ item, depth }, index) => (
+            <TOCDownloadItem
+              key={item.href || index}
+              item={item}
+              depth={depth}
+              index={index}
+              isSelected={selection.size === 0 ? false : selection.has(item.href || '')}
+              isDownloaded={downloadedHrefs.has(item.href || '')}
+              isActive={downloadingHref === item.href}
+              isCurrent={currentSectionHref === item.href}
+              isDownloading={isDownloading}
+              onToggle={handleToggleSelection}
+              innerRef={currentSectionHref === item.href ? currentChapterRef : undefined}
+            />
+          ))}
         </ul>
       </div>
       {/* FOOTER */}
       <div className='border-base-200 flex-shrink-0 border-t p-4'>
-        {/* Voice Change Confirm */}
         {showVoiceConfirm && (
           <div className='alert alert-warning mb-2 p-2 text-xs'>
             <span>{_('Changing voice will delete existing audio.')}</span>
@@ -612,7 +650,6 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
                 {_('Processing...')}
               </div>
             )}
-
             <div className='flex justify-end gap-2'>
               <button onClick={handleCancel} className='btn btn-error btn-sm w-full'>
                 {_('Cancel')}
