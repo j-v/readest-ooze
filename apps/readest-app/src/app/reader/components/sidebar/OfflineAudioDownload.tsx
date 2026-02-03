@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
-import { MdDownload, MdClose, MdCheckCircle, MdDelete, MdCheck } from 'react-icons/md';
+import { MdDownload, MdClose, MdDelete, MdCheck } from 'react-icons/md';
 import { RiVoiceAiFill } from 'react-icons/ri';
 import { useTranslation } from '@/hooks/useTranslation';
 import { offlineAudioManager, DownloadProgress } from '@/services/tts/OfflineAudioManager';
@@ -529,7 +529,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
                     {isActive ? (
                       <span className='loading loading-spinner loading-xs text-primary'></span>
                     ) : isDownloaded ? (
-                      <MdCheckCircle className='text-success text-lg' />
+                      <MdDownload className='text-lg opacity-50' />
                     ) : (
                       <div className='border-base-300 h-4 w-4 rounded-full border-2'></div>
                     )}
