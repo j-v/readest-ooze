@@ -4,16 +4,14 @@ import { offlineAudioManager } from '@/services/tts/OfflineAudioManager';
 import { useResponsiveSize } from '@/hooks/useResponsiveSize';
 import clsx from 'clsx';
 import { useTranslation } from '@/hooks/useTranslation';
+import { useReaderStore } from '@/store/readerStore';
 
 interface SidebarDownloadIndicatorProps {
   bookHash: string;
-  onClick: () => void;
 }
 
-const SidebarDownloadIndicator: React.FC<SidebarDownloadIndicatorProps> = ({
-  bookHash,
-  onClick,
-}) => {
+const SidebarDownloadIndicator: React.FC<SidebarDownloadIndicatorProps> = ({ bookHash }) => {
+  const { setShowOfflineAudioDownload } = useReaderStore();
   const [isDownloading, setIsDownloading] = useState(false);
   const [hasError, setHasError] = useState(false);
   const iconSize18 = useResponsiveSize(18);
@@ -119,7 +117,7 @@ const SidebarDownloadIndicator: React.FC<SidebarDownloadIndicatorProps> = ({
         `}
       </style>
       <button
-        onClick={onClick}
+        onClick={() => setShowOfflineAudioDownload(bookHash)}
         className={clsx(
           'btn btn-ghost hover:bg-base-300 h-6 min-h-6 w-6 rounded-full p-0 transition-colors',
           hasError ? 'text-error' : 'text-primary',

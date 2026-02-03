@@ -40,7 +40,6 @@ const SideBar: React.FC<{
   const { getBookData } = useBookDataStore();
   const { getView, getViewSettings } = useReaderStore();
   const [isSearchBarVisible, setIsSearchBarVisible] = useState(false);
-  const { setShowOfflineAudioDownload } = useSidebarStore();
   const searchTermRef = useRef(searchTerm);
   const sidebarHeight = useRef(1.0);
   const isMobile = window.innerWidth < 640;
@@ -309,7 +308,6 @@ const SideBar: React.FC<{
             onClose={() => setSideBarVisible(false)}
             onTogglePin={handleSideBarTogglePin}
             onToggleSearchBar={handleToggleSearchBar}
-            onShowOfflineAudio={() => setShowOfflineAudioDownload(sideBarBookKey)}
           />
           <div
             className={clsx('search-bar', {
@@ -323,10 +321,7 @@ const SideBar: React.FC<{
             />
           </div>
           <div className='border-base-300/50 border-b px-3'>
-            <BookCard
-              book={book}
-              onShowOfflineAudio={() => setShowOfflineAudioDownload(sideBarBookKey)}
-            />
+            <BookCard book={book} />
           </div>
         </div>
         {isSearchBarVisible && searchResults ? (

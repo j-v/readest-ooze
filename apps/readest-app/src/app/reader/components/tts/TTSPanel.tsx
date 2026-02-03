@@ -11,7 +11,6 @@ import {
 import { TbChevronCompactDown, TbChevronCompactUp } from 'react-icons/tb';
 import { RiVoiceAiFill } from 'react-icons/ri';
 import { MdCheck } from 'react-icons/md';
-import { useSidebarStore } from '@/store/sidebarStore';
 import { TTSVoicesGroup } from '@/services/tts';
 import { useEnv } from '@/context/EnvContext';
 import { useReaderStore } from '@/store/readerStore';
@@ -129,7 +128,7 @@ const TTSPanel = ({
   const { envConfig } = useEnv();
   const { getViewSettings, setViewSettings } = useReaderStore();
   const { settings, setSettings, saveSettings } = useSettingsStore();
-  const { setShowOfflineAudioDownload } = useSidebarStore();
+  const { setShowOfflineAudioDownload } = useReaderStore();
   const viewSettings = getViewSettings(bookKey);
 
   const [voiceGroups, setVoiceGroups] = useState<TTSVoicesGroup[]>([]);

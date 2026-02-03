@@ -10,13 +10,7 @@ import { formatAuthors, formatTitle } from '@/utils/book';
 import BookCover from '@/components/BookCover';
 import SidebarDownloadIndicator from './SidebarDownloadIndicator';
 
-const BookCard = ({
-  book,
-  onShowOfflineAudio,
-}: {
-  book: Book;
-  onShowOfflineAudio?: () => void;
-}) => {
+const BookCard = ({ book }: { book: Book }) => {
   const { title, author, hash } = book;
   const _ = useTranslation();
   const { isDarkMode } = useThemeStore();
@@ -49,9 +43,7 @@ const BookCard = ({
         <p className='truncate text-xs opacity-75'>{formatAuthors(author)}</p>
       </div>
       <div className='flex items-center gap-1'>
-        {onShowOfflineAudio && (
-          <SidebarDownloadIndicator bookHash={hash} onClick={onShowOfflineAudio} />
-        )}
+        <SidebarDownloadIndicator bookHash={hash} />
         <button
           className='btn btn-ghost hover:bg-base-300 h-6 min-h-6 w-6 rounded-full p-0 transition-colors'
           aria-label={_('More Info')}

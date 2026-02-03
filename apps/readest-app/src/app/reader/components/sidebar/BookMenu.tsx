@@ -24,18 +24,19 @@ import Menu from '@/components/Menu';
 interface BookMenuProps {
   menuClassName?: string;
   setIsDropdownOpen?: (isOpen: boolean) => void;
-  onShowOfflineAudio?: () => void;
 }
 
-const BookMenu: React.FC<BookMenuProps> = ({
-  menuClassName,
-  setIsDropdownOpen,
-  onShowOfflineAudio,
-}) => {
+const BookMenu: React.FC<BookMenuProps> = ({ menuClassName, setIsDropdownOpen }) => {
   const _ = useTranslation();
   const { envConfig } = useEnv();
   const { settings } = useSettingsStore();
-  const { bookKeys, recreateViewer, getViewSettings, setViewSettings } = useReaderStore();
+  const {
+    bookKeys,
+    recreateViewer,
+    getViewSettings,
+    setViewSettings,
+    setShowOfflineAudioDownload,
+  } = useReaderStore();
   const { getVisibleLibrary } = useLibraryStore();
   const { openParallelView } = useBooksManager();
   const { sideBarBookKey } = useSidebarStore();
@@ -99,7 +100,7 @@ const BookMenu: React.FC<BookMenuProps> = ({
     setIsDropdownOpen?.(false);
   };
   const handleShowOfflineAudio = () => {
-    onShowOfflineAudio?.();
+    setShowOfflineAudioDownload(sideBarBookKey);
     setIsDropdownOpen?.(false);
   };
 
