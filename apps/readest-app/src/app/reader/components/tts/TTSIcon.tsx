@@ -64,9 +64,16 @@ const TTSIcon: React.FC<TTSIconProps> = ({ isPlaying, ttsInited, isOffline, onCl
         </div>
       </button>
       {isOffline && (
-        <div className='absolute -bottom-1 -right-1 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-slate-700 p-0.5 text-white shadow-sm ring-1 ring-white/20'>
+        <button
+          className='absolute -bottom-1 -right-1 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-slate-700 p-0.5 text-white shadow-sm ring-1 ring-white/20'
+          onClick={(e) => {
+            e.stopPropagation();
+            onClick();
+          }}
+          aria-label='Offline TTS'
+        >
           <MdFileDownload size={14} />
-        </div>
+        </button>
       )}
     </div>
   );
