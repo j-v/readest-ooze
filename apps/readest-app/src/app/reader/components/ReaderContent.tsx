@@ -30,6 +30,8 @@ import SideBar from './sidebar/SideBar';
 import Notebook from './notebook/Notebook';
 import BooksGrid from './BooksGrid';
 import SettingsDialog from '@/components/settings/SettingsDialog';
+import ModalPortal from '@/components/ModalPortal';
+import OfflineAudioDownload from './sidebar/OfflineAudioDownload';
 
 const ReaderContent: React.FC<{ ids?: string; settings: SystemSettings }> = ({ ids, settings }) => {
   const _ = useTranslation();
@@ -43,6 +45,8 @@ const ReaderContent: React.FC<{ ids?: string; settings: SystemSettings }> = ({ i
   const { getView, setBookKeys, getViewSettings } = useReaderStore();
   const { initViewState, getViewState, clearViewState } = useReaderStore();
   const { isSettingsDialogOpen, settingsDialogBookKey } = useSettingsStore();
+  const { showOfflineAudioDialog, offlineAudioBookKey, setShowOfflineAudioDownload } =
+    useSidebarStore();
   const [showDetailsBook, setShowDetailsBook] = useState<Book | null>(null);
   const isInitiating = useRef(false);
   const [loading, setLoading] = useState(false);
@@ -225,6 +229,14 @@ const ReaderContent: React.FC<{ ids?: string; settings: SystemSettings }> = ({ i
           book={showDetailsBook}
           onClose={() => setShowDetailsBook(null)}
         />
+      )}
+      {showOfflineAudioDialog && offlineAudioBookKey && (
+        <ModalPortal>
+          <OfflineAudioDownload
+            bookKey={offlineAudioBookKey}
+            onClose={() => setShowOfflineAudioDownload(null)}
+          />
+        </ModalPortal>
       )}
     </div>
   );

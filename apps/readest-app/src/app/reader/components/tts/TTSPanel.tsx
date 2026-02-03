@@ -1,9 +1,17 @@
 import clsx from 'clsx';
 import React, { useState, ChangeEvent, useEffect } from 'react';
-import { MdPlayCircle, MdPauseCircle, MdFastRewind, MdFastForward, MdAlarm } from 'react-icons/md';
+import {
+  MdPlayCircle,
+  MdPauseCircle,
+  MdFastRewind,
+  MdFastForward,
+  MdAlarm,
+  MdFileDownload,
+} from 'react-icons/md';
 import { TbChevronCompactDown, TbChevronCompactUp } from 'react-icons/tb';
 import { RiVoiceAiFill } from 'react-icons/ri';
 import { MdCheck } from 'react-icons/md';
+import { useSidebarStore } from '@/store/sidebarStore';
 import { TTSVoicesGroup } from '@/services/tts';
 import { useEnv } from '@/context/EnvContext';
 import { useReaderStore } from '@/store/readerStore';
@@ -121,6 +129,7 @@ const TTSPanel = ({
   const { envConfig } = useEnv();
   const { getViewSettings, setViewSettings } = useReaderStore();
   const { settings, setSettings, saveSettings } = useSettingsStore();
+  const { setShowOfflineAudioDownload } = useSidebarStore();
   const viewSettings = getViewSettings(bookKey);
 
   const [voiceGroups, setVoiceGroups] = useState<TTSVoicesGroup[]>([]);
@@ -371,6 +380,14 @@ const TTSPanel = ({
             })}
           </ul>
         </div>
+        <button
+          onClick={() => setShowOfflineAudioDownload(bookKey)}
+          className='rounded-full p-1 transition-transform duration-200 hover:scale-105'
+          title={_('Download Offline Audio')}
+          aria-label={_('Download Offline Audio')}
+        >
+          <MdFileDownload size={iconSize32} />
+        </button>
       </div>
       <div className='flex h-4 items-center justify-center opacity-60 transition-transform duration-200 hover:scale-105 hover:opacity-100'>
         <button onClick={onToogleTTSBar} className='p-0'>

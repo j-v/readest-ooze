@@ -14,14 +14,12 @@ import { DragKey, useDrag } from '@/hooks/useDrag';
 import { useThemeStore } from '@/store/themeStore';
 import { Overlay } from '@/components/Overlay';
 import useShortcuts from '@/hooks/useShortcuts';
-import ModalPortal from '@/components/ModalPortal';
 import SidebarHeader from './Header';
 import SidebarContent from './Content';
 import BookCard from './BookCard';
 import useSidebar from '../../hooks/useSidebar';
 import SearchBar from './SearchBar';
 import SearchResults from './SearchResults';
-import OfflineAudioDownload from './OfflineAudioDownload';
 
 const MIN_SIDEBAR_WIDTH = 0.05;
 const MAX_SIDEBAR_WIDTH = 0.45;
@@ -42,7 +40,7 @@ const SideBar: React.FC<{
   const { getBookData } = useBookDataStore();
   const { getView, getViewSettings } = useReaderStore();
   const [isSearchBarVisible, setIsSearchBarVisible] = useState(false);
-  const [showOfflineAudioDialog, setShowOfflineAudioDialog] = useState(false);
+  const { setShowOfflineAudioDownload } = useSidebarStore();
   const searchTermRef = useRef(searchTerm);
   const sidebarHeight = useRef(1.0);
   const isMobile = window.innerWidth < 640;
@@ -311,7 +309,7 @@ const SideBar: React.FC<{
             onClose={() => setSideBarVisible(false)}
             onTogglePin={handleSideBarTogglePin}
             onToggleSearchBar={handleToggleSearchBar}
-            onShowOfflineAudio={() => setShowOfflineAudioDialog(true)}
+            onShowOfflineAudio={() => setShowOfflineAudioDownload(sideBarBookKey)}
           />
           <div
             className={clsx('search-bar', {
@@ -325,7 +323,10 @@ const SideBar: React.FC<{
             />
           </div>
           <div className='border-base-300/50 border-b px-3'>
-            <BookCard book={book} onShowOfflineAudio={() => setShowOfflineAudioDialog(true)} />
+            <BookCard
+              book={book}
+              onShowOfflineAudio={() => setShowOfflineAudioDownload(sideBarBookKey)}
+            />
           </div>
         </div>
         {isSearchBarVisible && searchResults ? (
@@ -338,16 +339,6 @@ const SideBar: React.FC<{
           <SidebarContent bookDoc={bookDoc} sideBarBookKey={sideBarBookKey!} />
         )}
       </div>
-
-      {/* Offline Audio Dialog */}
-      {showOfflineAudioDialog && sideBarBookKey && (
-        <ModalPortal>
-          <OfflineAudioDownload
-            bookKey={sideBarBookKey}
-            onClose={() => setShowOfflineAudioDialog(false)}
-          />
-        </ModalPortal>
-      )}
     </>
   ) : null;
 };

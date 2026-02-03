@@ -27,9 +27,12 @@ interface SidebarState {
   searchNavStates: Record<string, SearchNavState>;
   booknotesNavStates: Record<string, BooknotesNavState>;
   searchStatuses: Record<string, SearchStatus>;
+  showOfflineAudioDialog: boolean;
+  offlineAudioBookKey: string | null;
   getIsSideBarVisible: () => boolean;
   getSideBarWidth: () => string;
   setSideBarBookKey: (key: string) => void;
+  setShowOfflineAudioDownload: (bookKey: string | null) => void;
   setSideBarWidth: (width: string) => void;
   toggleSideBar: () => void;
   toggleSideBarPin: () => void;
@@ -77,9 +80,13 @@ export const useSidebarStore = create<SidebarState>((set, get) => ({
   searchNavStates: {},
   booknotesNavStates: {},
   searchStatuses: {},
+  showOfflineAudioDialog: false,
+  offlineAudioBookKey: null,
   getIsSideBarVisible: () => get().isSideBarVisible,
   getSideBarWidth: () => get().sideBarWidth,
   setSideBarBookKey: (key: string) => set({ sideBarBookKey: key }),
+  setShowOfflineAudioDownload: (bookKey) =>
+    set({ showOfflineAudioDialog: !!bookKey, offlineAudioBookKey: bookKey }),
   setSideBarWidth: (width: string) => set({ sideBarWidth: width }),
   toggleSideBar: () => set((state) => ({ isSideBarVisible: !state.isSideBarVisible })),
   toggleSideBarPin: () => set((state) => ({ isSideBarPinned: !state.isSideBarPinned })),
