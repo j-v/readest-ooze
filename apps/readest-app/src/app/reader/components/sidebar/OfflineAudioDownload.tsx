@@ -31,6 +31,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [downloadedHrefs, setDownloadedHrefs] = useState<Set<string>>(new Set());
   const [downloadingHref, setDownloadingHref] = useState<string | null>(null);
+  const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
 
   // Voice selection state
   const [voiceGroups, setVoiceGroups] = useState<TTSVoicesGroup[]>([]);
@@ -215,14 +216,27 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
   }, [bookDoc, bookKey, downloadedVoiceId, selectedVoiceId, viewSettings?.ttsVoice, ttsLang]);
 
   // Actions
-  const handleToggleSelection = (href: string) => {
+  const handleToggleSelection = (href: string, index: number, isShift?: boolean) => {
     if (isDownloading) return;
     setSelection((prev) => {
       const next = new Set(prev);
-      if (next.has(href)) next.delete(href);
-      else next.add(href);
+      if (isShift && lastSelectedIndex !== null) {
+        const start = Math.min(lastSelectedIndex, index);
+        const end = Math.max(lastSelectedIndex, index);
+        const rangeHrefs = flatTOC.slice(start, end + 1).map((x) => x.item.href || '');
+
+        const shouldSelect = !prev.has(href);
+        rangeHrefs.forEach((h) => {
+          if (shouldSelect) next.add(h);
+          else next.delete(h);
+        });
+      } else {
+        if (next.has(href)) next.delete(href);
+        else next.add(href);
+      }
       return next;
     });
+    setLastSelectedIndex(index);
   };
 
   const handleSelectAll = () => {
@@ -488,7 +502,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
       {/* LIST */}
       <div className='flex-1 overflow-y-auto p-0'>
         <ul className='menu menu-sm w-full p-0'>
-          {flatTOC.map(({ item, depth }) => {
+          {flatTOC.map(({ item, depth }, index) => {
             const href = item.href || '';
             const isDownloaded = downloadedHrefs.has(href);
             const isSelected = selection.has(href);
@@ -503,6 +517,18 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
                     isSelected && 'bg-base-200',
                     isCurrent && 'bg-primary/10 border-l-primary border-l-4',
                   )}
+                  onClick={(e) => {
+                    if (e.shiftKey) {
+                      e.preventDefault();
+                      handleToggleSelection(href, index, true);
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      // Normal toggle for keyboard
+                      handleToggleSelection(href, index);
+                    }
+                  }}
                 >
                   <div className='flex items-center gap-3 overflow-hidden'>
                     {/* Checkbox */}
@@ -510,7 +536,11 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
                       type='checkbox'
                       className='checkbox checkbox-sm checkbox-primary'
                       checked={isSelected}
-                      onChange={() => handleToggleSelection(href)}
+                      onChange={() => {
+                        // We handle shiftKey in label.onClick.
+                        // If it's a normal click/keyboard toggle, we handle it here.
+                        handleToggleSelection(href, index);
+                      }}
                       disabled={isDownloading}
                     />
 
