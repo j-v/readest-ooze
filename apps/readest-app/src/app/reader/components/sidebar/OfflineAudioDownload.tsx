@@ -115,6 +115,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
   const [error, setError] = useState<string | null>(null);
   const [totalSize, setTotalSize] = useState<number>(0);
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
+  const [isInitialized, setIsInitialized] = useState(false);
 
   // Selection State
   const [selection, setSelection] = useState<Set<string>>(new Set());
@@ -159,6 +160,9 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
     try {
       await offlineAudioManager.init();
 
+      const dVoiceId = await offlineAudioManager.getDownloadedVoice(bookId);
+      setDownloadedVoiceId(dVoiceId);
+
       const status = await offlineAudioManager.getStatus(bookId, '');
       setIsDownloading(status.inProgress);
       if (status.inProgress && status.progress) {
@@ -176,16 +180,88 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
 
       const size = await offlineAudioManager.getTotalSize(bookId);
       setTotalSize(size);
-
-      const dVoiceId = await offlineAudioManager.getDownloadedVoice(bookId);
-      setDownloadedVoiceId(dVoiceId);
-      if (dVoiceId) {
-        setSelectedVoiceId(dVoiceId);
-      }
     } catch (err) {
       console.error('Error loading offline audio status:', err);
     }
   }, [bookId]);
+
+  // Voice Loading & Selection Logic
+  useEffect(() => {
+    let isMounted = true;
+    const loadVoicesAndSetDefault = async () => {
+      if (!bookDoc) return;
+      await loadStatus();
+      if (!isMounted) return;
+
+      // Determine active chapter for voice context
+      const firstSelectionHref = Array.from(selection)[0];
+      const activeHref = firstSelectionHref || currentSectionHref || flatTOC[0]?.item?.href;
+
+      let chapterVoiceId: string | null = null;
+      if (activeHref) {
+        chapterVoiceId = await offlineAudioManager.getDownloadedVoiceForSection(bookId, activeHref);
+      }
+
+      const bookDownloadedVoiceId = await offlineAudioManager.getDownloadedVoice(bookId);
+
+      // 1. Get current language context
+      const groups = await offlineAudioManager.getVoices(ttsLang);
+      if (!isMounted) return;
+      setVoiceGroups(groups);
+
+      // 2. Set initial stable voice if not yet selected or if current selection is invalid
+      setSelectedVoiceId((prev) => {
+        const allVoices = groups.flatMap((g) => g.voices);
+        const isValid = (id: string | null | undefined) =>
+          !!id && allVoices.some((v) => v.id === id);
+
+        // A. Keep current selection if it's still valid for this context
+        if (isValid(prev)) return prev;
+
+        // B. Chapter-specific downloaded voice (highest context priority)
+        if (isValid(chapterVoiceId)) return chapterVoiceId!;
+
+        // C. Last downloaded voice for the book (consistency priority)
+        if (isValid(bookDownloadedVoiceId)) return bookDownloadedVoiceId!;
+
+        // D. Reader settings (user preference priority)
+        if (isValid(viewSettings?.ttsVoice)) return viewSettings!.ttsVoice!;
+
+        // E. System preference (global preference priority)
+        const preferredClient = TTSUtils.getPreferredClient();
+        if (preferredClient) {
+          const globalVoice = TTSUtils.getPreferredVoice(preferredClient, ttsLang);
+          if (isValid(globalVoice)) return globalVoice!;
+        }
+
+        // F. First available voice from preferred engine (http/kokoro)
+        const engineFallback =
+          groups.find((g) => g.id === 'http-tts')?.voices[0]?.id || groups[0]?.voices[0]?.id;
+
+        if (engineFallback) return engineFallback;
+
+        // G. Hardcoded absolute fallback
+        return 'en-US-AriaNeural';
+      });
+      setIsInitialized(true);
+    };
+
+    loadVoicesAndSetDefault();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [
+    bookDoc,
+    bookId,
+    ttsLang,
+    selection,
+    currentSectionHref,
+    downloadedVoiceId,
+    viewSettings,
+    loadStatus,
+    flatTOC,
+  ]);
 
   // Event Listeners
   useEffect(() => {
@@ -259,47 +335,12 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
     };
   }, [bookId, loadStatus]);
 
-  useEffect(() => {
-    loadStatus();
-  }, [loadStatus]);
-
   // Scroll to current chapter
   useEffect(() => {
     if (currentChapterRef.current) {
       currentChapterRef.current.scrollIntoView({ behavior: 'auto', block: 'center' });
     }
   }, [currentSectionHref, flatTOC.length]);
-
-  // Voice Loading
-  useEffect(() => {
-    const loadVoices = async () => {
-      if (!bookDoc) return;
-      const groups = await offlineAudioManager.getVoices(ttsLang);
-      setVoiceGroups(groups);
-
-      if (!selectedVoiceId && !downloadedVoiceId) {
-        let defaultVoice = '';
-        if (viewSettings?.ttsVoice) defaultVoice = viewSettings.ttsVoice;
-        if (!defaultVoice) {
-          const preferredClient = TTSUtils.getPreferredClient();
-          if (preferredClient) {
-            const globalVoice = TTSUtils.getPreferredVoice(preferredClient, ttsLang);
-            if (globalVoice) defaultVoice = globalVoice;
-          }
-        }
-        if (!defaultVoice) {
-          defaultVoice =
-            groups.find((g) => g.id === 'http-tts')?.voices[0]?.id ||
-            groups[0]?.voices[0]?.id ||
-            'en-US-AriaNeural';
-        }
-        if (defaultVoice) setSelectedVoiceId(defaultVoice);
-      }
-    };
-    loadVoices();
-  }, [bookDoc, bookKey, downloadedVoiceId, selectedVoiceId, viewSettings?.ttsVoice, ttsLang]);
-
-  // Actions
   const handleToggleSelection = (href: string, index: number, isShift?: boolean) => {
     if (isDownloading) return;
     setSelection((prev) => {
@@ -505,7 +546,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
           <summary
             className={clsx(
               'btn btn-sm btn-outline w-full justify-between',
-              isDownloading && 'btn-disabled',
+              (isDownloading || !isInitialized) && 'btn-disabled',
             )}
           >
             <div className='flex items-center gap-2'>
@@ -634,7 +675,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
           <div className='flex gap-2'>
             <button
               onClick={handleDownloadSelected}
-              disabled={isSelectionEmpty || !hasMissingInSelection}
+              disabled={!isInitialized || isSelectionEmpty || !hasMissingInSelection}
               className='btn btn-primary btn-sm flex-1'
             >
               <MdDownload />
@@ -642,7 +683,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
             </button>
             <button
               onClick={handleDeleteSelected}
-              disabled={isSelectionEmpty || !hasDownloadedInSelection}
+              disabled={!isInitialized || isSelectionEmpty || !hasDownloadedInSelection}
               className='btn btn-outline btn-error btn-sm w-1/3'
             >
               <MdDelete />
