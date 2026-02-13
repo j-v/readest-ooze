@@ -59,7 +59,7 @@ const TOCDownloadItem: React.FC<TOCDownloadItemProps> = ({
       <div
         role='button'
         className={clsx(
-          'focus:bg-base-300 flex h-auto cursor-pointer items-center justify-between rounded-none py-3 pr-4 outline-none transition-colors',
+          'focus:bg-base-300 flex h-auto cursor-pointer items-center rounded-none py-3 pr-4 outline-none transition-colors',
           isSelected && 'bg-base-200',
           isCurrent && 'bg-primary/10 border-l-primary border-l-4',
           pressing && 'bg-base-300',
@@ -82,6 +82,16 @@ const TOCDownloadItem: React.FC<TOCDownloadItemProps> = ({
             disabled={isDownloading}
           />
 
+          <div className='flex-shrink-0'>
+            {isActive ? (
+              <span className='loading loading-spinner loading-xs text-primary'></span>
+            ) : isDownloaded ? (
+              <MdDownload className='text-lg opacity-50' />
+            ) : (
+              <></>
+            )}
+          </div>
+
           <span className='truncate' style={{ paddingLeft: `${depth * 12}px` }}>
             {item.label || href}
           </span>
@@ -89,16 +99,6 @@ const TOCDownloadItem: React.FC<TOCDownloadItemProps> = ({
             <span className='badge badge-primary badge-xs py-2 uppercase tracking-wide opacity-80'>
               {_('Current')}
             </span>
-          )}
-        </div>
-
-        <div className='flex-shrink-0'>
-          {isActive ? (
-            <span className='loading loading-spinner loading-xs text-primary'></span>
-          ) : isDownloaded ? (
-            <MdDownload className='text-lg opacity-50' />
-          ) : (
-            <div className='border-base-300 h-4 w-4 rounded-full border-2'></div>
           )}
         </div>
       </div>
