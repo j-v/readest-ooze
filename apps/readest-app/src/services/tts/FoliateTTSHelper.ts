@@ -7,6 +7,23 @@ import { BookDoc, SectionItem } from '@/libs/document';
 import { createRejectFilter } from '@/utils/node';
 import { TTSGranularity } from './types';
 
+// copied from foliate-js
+const NS = {
+    XML: 'http://www.w3.org/XML/1998/namespace',
+    SSML: 'http://www.w3.org/2001/10/synthesis',
+}
+
+const setLangIfMissing = (el: Element, lang: string) => {
+    const langAttr = (el as HTMLElement).lang || el?.getAttributeNS?.(NS.XML, 'lang');
+    if (!langAttr) {
+        if (el.parentElement) {
+            setLangIfMissing(el.parentElement, lang);
+        } else {
+            el.setAttributeNS(NS.XML, 'lang', lang);
+        }
+    }
+}
+
 /**
  * Result from generating SSML for a section
  */
@@ -84,6 +101,9 @@ export async function loadSectionDocument(
 
   try {
     const doc = await section.createDocument();
+    const language = bookDoc.metadata.language;
+    const bookLang = Array.isArray(language) ? language[0]! : language;
+    setLangIfMissing(doc.documentElement, bookLang);
     return doc;
   } catch (error) {
     console.error('[FoliateTTSHelper] Error loading section document:', error);
