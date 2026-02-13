@@ -167,6 +167,9 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
       setIsDownloading(status.inProgress);
       if (status.inProgress && status.progress) {
         setDownloadProgress(status.progress);
+        if (status.progress.sectionHrefs) {
+          setSelection(new Set(status.progress.sectionHrefs));
+        }
       } else if (
         !status.inProgress &&
         status.progress?.lastError &&

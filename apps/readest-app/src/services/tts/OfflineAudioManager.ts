@@ -338,6 +338,7 @@ class OfflineAudioManager extends EventTarget {
         downloadedSections: 0, // We will count pre-existing in this batch as "done" but we iterate to find them
         failedSections: [],
         inProgress: true,
+        sectionHrefs: sections.map((s) => s.href || '').filter(Boolean),
         startedAt: Date.now(),
       };
 

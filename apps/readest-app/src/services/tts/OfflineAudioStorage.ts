@@ -46,6 +46,7 @@ export interface DownloadProgress {
   downloadedSections: number;
   failedSections: string[]; // hrefs that failed
   inProgress: boolean;
+  sectionHrefs?: string[]; // HREFs included in the current download batch
   startedAt?: number;
   completedAt?: number;
   lastError?: string;
