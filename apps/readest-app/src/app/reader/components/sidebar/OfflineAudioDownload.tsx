@@ -160,9 +160,6 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
     try {
       await offlineAudioManager.init();
 
-      const dVoiceId = await offlineAudioManager.getDownloadedVoice(bookId);
-      setDownloadedVoiceId(dVoiceId);
-
       const status = await offlineAudioManager.getStatus(bookId, '');
       setIsDownloading(status.inProgress);
       if (status.inProgress && status.progress) {
