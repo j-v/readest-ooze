@@ -353,53 +353,7 @@ const LangPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterReset 
         </div>
       )}
 
-      <div className='w-full'>
-        <h2 className='mb-2 font-medium'>{_('Custom TTS Endpoint')}</h2>
-        <div className='card border-base-200 bg-base-100 border shadow'>
-          <div className='divide-base-200'>
-            <div className='config-item'>
-              <span className=''>{_('Enable Custom Endpoint')}</span>
-              <input
-                type='checkbox'
-                className='toggle'
-                checked={settings.customTTSEndpoint?.enabled ?? false}
-                onChange={() => {
-                  const newSettings = {
-                    ...settings,
-                    customTTSEndpoint: {
-                      ...settings.customTTSEndpoint,
-                      enabled: !settings.customTTSEndpoint?.enabled,
-                    },
-                  };
-                  useSettingsStore.getState().setSettings(newSettings);
-                  useSettingsStore.getState().saveSettings(envConfig, newSettings);
-                }}
-              />
-            </div>
-            {settings.customTTSEndpoint?.enabled && (
-              <div className='config-item'>
-                <span className=''>{_('Endpoint URL')}</span>
-                <input
-                  type='text'
-                  className='input input-bordered input-sm w-full max-w-xs'
-                  value={settings.customTTSEndpoint?.endpoint ?? ''}
-                  onChange={(e) => {
-                    const newSettings = {
-                      ...settings,
-                      customTTSEndpoint: {
-                        ...settings.customTTSEndpoint,
-                        endpoint: e.target.value,
-                      },
-                    };
-                    useSettingsStore.getState().setSettings(newSettings);
-                    useSettingsStore.getState().saveSettings(envConfig, newSettings);
-                  }}
-                />
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
+      
     </div>
   );
 };
