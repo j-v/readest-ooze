@@ -542,50 +542,52 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
           </span>
         </div>
 
-        <details ref={voiceDropdownRef} className='dropdown dropdown-bottom w-full'>
-          <summary
-            className={clsx(
-              'btn btn-sm btn-outline w-full justify-between',
-              (isDownloading || !isInitialized) && 'btn-disabled',
-            )}
-          >
-            <div className='flex items-center gap-2'>
-              <RiVoiceAiFill />
-              <span className='truncate'>
-                {voiceGroups.flatMap((g) => g.voices).find((v) => v.id === selectedVoiceId)?.name ||
-                  _('Select Voice')}
-              </span>
-            </div>
-            <MdDownload className='rotate-90 text-xs' />
-          </summary>
-          <ul className='dropdown-content menu bg-base-100 rounded-box z-[1] block max-h-60 w-full flex-nowrap overflow-y-auto p-2 shadow'>
-            {voiceGroups.map((group) => (
-              <React.Fragment key={group.id}>
-                <li className='menu-title border-base-200 mt-2 border-b px-2 py-1 text-xs font-bold uppercase tracking-wider opacity-50 first:mt-0'>
-                  {group.name}
-                </li>
-                {group.voices.map((voice) => (
-                  <li key={voice.id}>
-                    <button
-                      type='button'
-                      className={clsx(
-                        'flex w-full items-center justify-between text-left',
-                        selectedVoiceId === voice.id && 'active',
-                      )}
-                      onClick={() => {
-                        setSelectedVoiceId(voice.id);
-                        voiceDropdownRef.current?.removeAttribute('open');
-                      }}
-                    >
-                      <span>{voice.name}</span>
-                      {selectedVoiceId === voice.id && <MdCheck />}
-                    </button>
+        <div className='mb-2 flex w-full items-center gap-2'>
+          <div className='flex-shrink-0 text-xs opacity-70'>{_('Voice: ')}</div>
+          <details ref={voiceDropdownRef} className='dropdown dropdown-bottom min-w-0 flex-1'>
+            <summary
+              className={clsx(
+                'btn btn-sm btn-outline w-full justify-between',
+                (isDownloading || !isInitialized) && 'btn-disabled',
+              )}
+            >
+              <div className='flex items-center gap-2'>
+                <RiVoiceAiFill />
+                <span className='truncate'>
+                  {voiceGroups.flatMap((g) => g.voices).find((v) => v.id === selectedVoiceId)
+                    ?.name || _('Select Voice')}
+                </span>
+              </div>
+            </summary>
+            <ul className='dropdown-content menu bg-base-100 rounded-box z-[1] block max-h-60 w-full flex-nowrap overflow-y-auto p-2 shadow'>
+              {voiceGroups.map((group) => (
+                <React.Fragment key={group.id}>
+                  <li className='menu-title border-base-200 mt-2 border-b px-2 py-1 text-xs font-bold uppercase tracking-wider opacity-50 first:mt-0'>
+                    {group.name}
                   </li>
-                ))}
-              </React.Fragment>
-            ))}
-          </ul>
-        </details>
+                  {group.voices.map((voice) => (
+                    <li key={voice.id}>
+                      <button
+                        type='button'
+                        className={clsx(
+                          'flex w-full items-center justify-between text-left',
+                          selectedVoiceId === voice.id && 'active',
+                        )}
+                        onClick={() => {
+                          setSelectedVoiceId(voice.id);
+                          voiceDropdownRef.current?.removeAttribute('open');
+                        }}
+                      >
+                        <span>{voice.name}</span>
+                        {selectedVoiceId === voice.id && <MdCheck />}
+                      </button>
+                    </li>
+                  ))}
+                </React.Fragment>
+              ))}
+            </ul>
+          </details>
+        </div>
       </div>
 
       <div className='bg-base-200/50 border-base-200 flex flex-shrink-0 gap-2 border-b px-4 py-2 text-xs'>
