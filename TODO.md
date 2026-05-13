@@ -1,13 +1,13 @@
 next step
 
+- remove all the TOS icons and offlineAudioManager events specific for TOS
 - multi select download dialog
   - test in iOS
 - look into https://github.com/readest/readest/pull/1858 existing PR for implementing custom TTS endpoint (OpenAI compatible)
 - need to use tauriFetch for http? and configure CSP in tauri.conf?
+  - not entirely sure where this is needed, it works fine on my iOS device
 
 to test
-
--- test the cache busting fix - then make PR
 
 - is online audio still working - YES, when started in online
 - test offline->online fallback working - NO
@@ -22,7 +22,7 @@ HTTP TTS server settings
 
 issues with offline audio
 
-- spinner in TOC item broken - remove or fix it (needs event handling?)
+- offlineAudioManager can hang a bit when initializing, so reduce amount of times initialization is needed, like keep it alive between dialog opens
 - voice management is unclear in download dialog (can change it between downloads)
 - I think downloading parent of nested chapter downloads all children but they don't get recognized as downloaded (Hamlet Act V)
   - actually in Hamlet -looks like parent downloads its first child, but first child needs to be repeated.
@@ -41,7 +41,6 @@ issues with offline audio
 
 offline audio improvements
 
-- show download progress in TOC (spinners) or at least show top level indication that download is in progress, maybe it links to the download dialog
 - multi select download dialog
   - nice to have: spinners appear immediately for all pending downloads (not just the one that was just started)
 - batch chapter download
