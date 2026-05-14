@@ -42,19 +42,28 @@ export function PublicationCard({
   }, [publication.images]);
 
   const imageLink = coverImage || thumbnailImage;
-  const imageUrl = imageLink ? resolveURL(imageLink.href, baseURL) : null;
+  const imageUrl = imageLink?.href ? resolveURL(imageLink.href, baseURL) : null;
 
   const authors = useMemo(() => {
-    return publication.metadata?.author
-      ?.map((author) => (typeof author === 'string' ? author : author.name))
-      .join(', ');
+    const author = publication.metadata?.author;
+    if (!author) return undefined;
+
+    const authorList = Array.isArray(author) ? author : [author];
+
+    return authorList.map((a) => (typeof a === 'string' ? a : a?.name)).filter(Boolean);
   }, [publication.metadata?.author]);
 
   const price = useMemo(() => {
     const priceLink = publication.links?.find((link) => link.properties?.price);
     if (priceLink?.properties?.price) {
-      const { currency, value } = priceLink.properties.price;
-      return `${currency} ${value}`;
+      const priceObj = Array.isArray(priceLink.properties.price)
+        ? priceLink.properties.price[0]
+        : priceLink.properties.price;
+
+      if (priceObj) {
+        const { currency, value } = priceObj;
+        return `${currency ? currency + ' ' : ''}${value}`;
+      }
     }
     if (linksByRel.has(REL.ACQ + '/open-access')) {
       return _('Open Access');
@@ -64,11 +73,7 @@ export function PublicationCard({
   }, [publication.links, linksByRel]);
 
   return (
-    <div
-      role='none'
-      onClick={onClick}
-      className='card bg-base-100 cursor-pointer transition-shadow'
-    >
+    <div role='none' onClick={onClick} className='card cursor-pointer transition-shadow'>
       <figure className='bg-base-200 relative aspect-[28/41] rounded-none shadow-md'>
         <CachedImage
           src={imageUrl}
@@ -83,7 +88,9 @@ export function PublicationCard({
         <h3 className='card-title line-clamp-1 text-sm'>
           {publication.metadata?.title || 'Untitled'}
         </h3>
-        {authors && <p className='text-base-content/70 line-clamp-1 text-xs'>{authors}</p>}
+        {authors && authors.length > 0 && (
+          <p className='text-base-content/70 line-clamp-1 text-xs'>{authors.join(', ')}</p>
+        )}
         {price && (
           <div className='card-actions mt-2 justify-end'>
             <div className='badge badge-outline badge-sm'>{price}</div>

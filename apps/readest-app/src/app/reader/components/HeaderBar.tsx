@@ -1,23 +1,27 @@
 import clsx from 'clsx';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { PiDotsThreeVerticalBold } from 'react-icons/pi';
+import { VscLibrary } from 'react-icons/vsc';
 
 import { Insets } from '@/types/misc';
 import { useEnv } from '@/context/EnvContext';
 import { useThemeStore } from '@/store/themeStore';
 import { useReaderStore } from '@/store/readerStore';
+import { useBookDataStore } from '@/store/bookDataStore';
 import { useSidebarStore } from '@/store/sidebarStore';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useTrafficLightStore } from '@/store/trafficLightStore';
 import { useTrafficLight } from '@/hooks/useTrafficLight';
 import { useResponsiveSize } from '@/hooks/useResponsiveSize';
+import { useSpatialNavigation } from '@/app/reader/hooks/useSpatialNavigation';
 import { getHighlightColorHex } from '../utils/annotatorUtil';
 import { annotationToolQuickActions } from './annotator/AnnotationTools';
 import { AnnotationToolType } from '@/types/annotator';
 import { saveViewSettings } from '@/helpers/settings';
 import { HighlighterIcon } from '@/components/HighlighterIcon';
 import Dropdown from '@/components/Dropdown';
+import ModalPortal from '@/components/ModalPortal';
 import WindowButtons from '@/components/WindowButtons';
 import QuickActionMenu from './annotator/QuickActionMenu';
 import SidebarToggler from './SidebarToggler';
@@ -26,6 +30,7 @@ import NotebookToggler from './NotebookToggler';
 import SettingsToggler from './SettingsToggler';
 import TranslationToggler from './TranslationToggler';
 import ViewMenu from './ViewMenu';
+import SyncInfoDialog from './SyncInfoDialog';
 
 interface HeaderBarProps {
   bookKey: string;
@@ -33,7 +38,10 @@ interface HeaderBarProps {
   isTopLeft: boolean;
   isHoveredAnim: boolean;
   gridInsets: Insets;
+  screenInsets: Insets;
   onCloseBook: (bookKey: string) => void;
+  onGoToLibrary: () => void;
+  onDropdownOpenChange?: (isOpen: boolean) => void;
 }
 
 const HeaderBar: React.FC<HeaderBarProps> = ({
@@ -42,7 +50,10 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
   isTopLeft,
   isHoveredAnim,
   gridInsets,
+  screenInsets,
   onCloseBook,
+  onGoToLibrary,
+  onDropdownOpenChange,
 }) => {
   const _ = useTranslation();
   const { envConfig, appService } = useEnv();
@@ -51,15 +62,22 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
   const { trafficLightInFullscreen, setTrafficLightVisibility } = useTrafficLightStore();
   const { bookKeys, hoveredBookKey } = useReaderStore();
   const { isDarkMode, systemUIVisible, statusBarHeight } = useThemeStore();
-  const { isSideBarVisible } = useSidebarStore();
+  const { isSideBarVisible, getIsSideBarVisible } = useSidebarStore();
   const { getView, getViewSettings, setHoveredBookKey } = useReaderStore();
+  const { getBookData, getConfig } = useBookDataStore();
   const viewSettings = getViewSettings(bookKey);
+  const bookData = getBookData(bookKey);
+  const bookConfig = getConfig(bookKey);
+  const lastSyncedAt =
+    Math.max(bookConfig?.lastSyncedAtConfig || 0, bookConfig?.lastSyncedAtNotes || 0) || undefined;
 
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [isMetaHashDialogOpen, setIsMetaHashDialogOpen] = useState(false);
+  const [headerWidth, setHeaderWidth] = useState(0);
   const view = getView(bookKey);
   const iconSize16 = useResponsiveSize(16);
+  const iconSize18 = useResponsiveSize(18);
   const headerRef = useRef<HTMLDivElement>(null);
-  const windowButtonVisible = appService?.hasWindowBar && !isTrafficLightVisible;
 
   const docs = view?.renderer.getContents() ?? [];
   const pointerInDoc = docs.some(({ doc }) => doc?.body?.style.cursor === 'pointer');
@@ -77,6 +95,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
 
   const handleToggleDropdown = (isOpen: boolean) => {
     setIsDropdownOpen(isOpen);
+    onDropdownOpenChange?.(isOpen);
     if (!isOpen) setHoveredBookKey('');
   };
 
@@ -87,15 +106,28 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
 
   useEffect(() => {
     if (!appService?.hasTrafficLight) return;
-    if (isSideBarVisible) return;
 
     if (hoveredBookKey === bookKey && isTopLeft) {
       setTrafficLightVisibility(true, { x: 10, y: 20 });
     } else if (!hoveredBookKey) {
-      setTrafficLightVisibility(false);
+      setTimeout(() => {
+        if (!getIsSideBarVisible()) {
+          setTrafficLightVisibility(false);
+        }
+      }, 100);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appService, isSideBarVisible, hoveredBookKey]);
+  }, [appService, hoveredBookKey]);
+
+  useEffect(() => {
+    const header = headerRef.current;
+    if (!header) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setHeaderWidth(entry.contentRect.width);
+    });
+    observer.observe(header);
+    return () => observer.disconnect();
+  }, []);
 
   // Check if mouse is outside header area to avoid false positive event of MouseLeave when clicking inside header on Windows
   const isMouseOutsideHeader = useCallback((clientX: number, clientY: number) => {
@@ -107,19 +139,30 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
     );
   }, []);
 
+  const isHeaderCompact = headerWidth > 0 && headerWidth < 350;
+  const insets = window.innerWidth < 640 ? screenInsets : gridInsets;
   const isHeaderVisible = hoveredBookKey === bookKey || isDropdownOpen;
+
+  useSpatialNavigation(headerRef, isHeaderVisible);
   const trafficLightInHeader =
     appService?.hasTrafficLight && !trafficLightInFullscreen && !isSideBarVisible && isTopLeft;
+  const windowButtonVisible =
+    appService?.hasWindowBar && !isTrafficLightVisible && !trafficLightInHeader;
 
   return (
     <div
-      className={clsx('bg-base-100 absolute top-0 w-full')}
+      className={clsx(
+        'left-0 top-0 w-full',
+        isHeaderVisible && 'bg-base-100',
+        window.innerWidth < 640 ? 'fixed z-20' : 'absolute',
+      )}
       style={{
-        paddingTop: appService?.hasSafeAreaInset ? `${gridInsets.top}px` : '0px',
+        paddingTop: appService?.hasSafeAreaInset ? `${insets.top}px` : '0px',
       }}
     >
       <div
         role='none'
+        tabIndex={-1}
         className={clsx('absolute top-0 z-10 h-11 w-full', pointerInDoc && 'pointer-events-none')}
         onClick={() => setHoveredBookKey(bookKey)}
         onMouseEnter={() => !appService?.isMobile && setHoveredBookKey(bookKey)}
@@ -132,17 +175,17 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
           isHeaderVisible ? 'visible' : 'hidden',
         )}
         style={{
-          height: systemUIVisible ? `${Math.max(gridInsets.top, statusBarHeight)}px` : '0px',
+          height: systemUIVisible ? `${Math.max(insets.top, statusBarHeight)}px` : '0px',
         }}
       />
       <div
         ref={headerRef}
-        role='group'
+        role='banner'
         aria-label={_('Header Bar')}
         className={clsx(
           `header-bar bg-base-100 absolute top-0 z-10 flex h-11 w-full items-center pr-4`,
           `shadow-xs transition-[opacity,margin-top] duration-300`,
-          trafficLightInHeader ? 'pl-20' : 'pl-4',
+          trafficLightInHeader ? 'pl-20' : isSideBarVisible ? 'ps-4' : 'ps-4 sm:ps-1.5',
           appService?.hasRoundedWindow && 'rounded-window-top-right',
           !isSideBarVisible && appService?.hasRoundedWindow && 'rounded-window-top-left',
           isHoveredAnim && 'hover-bar-anim',
@@ -151,8 +194,8 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
         )}
         style={{
           marginTop: systemUIVisible
-            ? `${Math.max(gridInsets.top, statusBarHeight)}px`
-            : `${gridInsets.top}px`,
+            ? `${Math.max(insets.top, statusBarHeight)}px`
+            : `${insets.top}px`,
         }}
         onFocus={() => !appService?.isMobile && setHoveredBookKey(bookKey)}
         onMouseLeave={(e) => {
@@ -161,12 +204,26 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
           }
         }}
       >
-        <div className='bg-base-100 sidebar-bookmark-toggler z-20 flex h-full items-center gap-x-4 pe-2'>
-          <div className='hidden sm:flex'>
-            <SidebarToggler bookKey={bookKey} />
+        <div className='header-tools-start bg-base-100 sidebar-bookmark-toggler z-20 flex h-full min-w-0 items-center gap-x-4 pe-2 max-[350px]:gap-x-2'>
+          <div
+            className='flex min-w-0 items-center gap-x-4 overflow-x-auto max-[350px]:gap-x-2'
+            style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+          >
+            {!isSideBarVisible && (
+              <div className='hidden sm:flex'>
+                <SidebarToggler bookKey={bookKey} />
+              </div>
+            )}
+            <button
+              title={_('Go to Library')}
+              className='btn btn-ghost hidden h-8 min-h-8 w-8 p-0 sm:flex'
+              onClick={onGoToLibrary}
+            >
+              <VscLibrary size={iconSize18} className='fill-base-content' />
+            </button>
+            <BookmarkToggler bookKey={bookKey} />
+            <TranslationToggler bookKey={bookKey} />
           </div>
-          <BookmarkToggler bookKey={bookKey} />
-          <TranslationToggler bookKey={bookKey} />
           {enableAnnotationQuickActions && (
             <Dropdown
               label={
@@ -174,7 +231,8 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
                   ? _('Disable Quick Action')
                   : _('Enable Quick Action on Selection')
               }
-              className='exclude-title-bar-mousedown dropdown-bottom'
+              className='exclude-title-bar-mousedown dropdown-bottom dropdown-center'
+              menuClassName='!relative'
               buttonClassName={clsx(
                 'btn btn-ghost h-8 min-h-8 w-8 p-0',
                 viewSettings?.annotationQuickAction && 'bg-base-300/50',
@@ -209,6 +267,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
           className={clsx(
             'header-title z-15 bg-base-100 pointer-events-none hidden flex-1 items-center justify-center sm:flex',
             !windowButtonVisible && 'absolute inset-0',
+            isHeaderCompact && '!hidden',
           )}
         >
           <div
@@ -222,8 +281,8 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
           </div>
         </div>
 
-        <div className='bg-base-100 z-20 ml-auto flex h-full items-center space-x-4 ps-2'>
-          <SettingsToggler bookKey={bookKey} />
+        <div className='header-tools-end bg-base-100 z-20 ms-auto flex h-full min-w-max items-center gap-x-4 ps-2 max-[350px]:gap-x-2'>
+          {!isHeaderCompact && <SettingsToggler bookKey={bookKey} />}
           <NotebookToggler bookKey={bookKey} />
           <Dropdown
             label={_('View Options')}
@@ -232,14 +291,28 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
             toggleButton={<PiDotsThreeVerticalBold size={iconSize16} />}
             onToggle={handleToggleDropdown}
           >
-            <ViewMenu bookKey={bookKey} />
+            <ViewMenu
+              bookKey={bookKey}
+              onShowMetaHashDialog={() => setIsMetaHashDialogOpen(true)}
+            />
           </Dropdown>
-
+          {isMetaHashDialogOpen && (
+            <ModalPortal showOverlay={false}>
+              <SyncInfoDialog
+                isOpen={isMetaHashDialogOpen}
+                metadata={bookData?.bookDoc?.metadata ?? bookData?.book?.metadata}
+                storedMetaHash={bookData?.book?.metaHash}
+                lastSyncedAt={lastSyncedAt}
+                onClose={() => setIsMetaHashDialogOpen(false)}
+              />
+            </ModalPortal>
+          )}
           <WindowButtons
-            className='window-buttons flex h-full items-center'
+            className='window-buttons flex items-center'
             headerRef={headerRef}
             showMinimize={bookKeys.length == 1 && windowButtonVisible}
             showMaximize={bookKeys.length == 1 && windowButtonVisible}
+            closeButtonLabel={_('Close Book')}
             onClose={() => {
               setHoveredBookKey(null);
               onCloseBook(bookKey);

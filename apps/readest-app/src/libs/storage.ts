@@ -44,6 +44,7 @@ export const uploadFile = async (
   fileFullPath: string,
   onProgress?: ProgressHandler,
   bookHash?: string,
+  temp = false,
 ) => {
   try {
     const response = await fetchWithAuth(API_ENDPOINTS.upload, {
@@ -55,21 +56,65 @@ export const uploadFile = async (
         fileName: file.name,
         fileSize: file.size,
         bookHash,
+        temp,
       }),
     });
 
-    const { uploadUrl } = await response.json();
+    const { uploadUrl, downloadUrl }: { uploadUrl: string; downloadUrl?: string } =
+      await response.json();
     if (isWebAppPlatform()) {
       await webUpload(file, uploadUrl, onProgress);
     } else {
       await tauriUpload(uploadUrl, fileFullPath, 'PUT', onProgress);
     }
+    return temp ? downloadUrl : undefined;
   } catch (error) {
     console.error('File upload failed:', error);
     if (error instanceof Error) {
       throw error;
     }
     throw new Error('File upload failed');
+  }
+};
+
+// Replica file upload. Reuses the books-style signed-URL path so 1+ GB
+// dictionaries bypass the CF Workers body limit (per plan-eng-review §1).
+// `cfp` is the cloud file path (key under the user's prefix); it must
+// already contain the kind + replica-id prefix from CLOUD_REPLICAS_SUBDIR.
+// Filenames are server-validated (see src/libs/replicaSchemas.ts:validateFilename).
+export const uploadReplicaFile = async (
+  file: File,
+  fileFullPath: string,
+  cfp: string,
+  replicaKind: string,
+  replicaId: string,
+  onProgress?: ProgressHandler,
+) => {
+  try {
+    const response = await fetchWithAuth(API_ENDPOINTS.upload, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        fileName: cfp,
+        fileSize: file.size,
+        replicaKind,
+        replicaId,
+        temp: false,
+      }),
+    });
+
+    const { uploadUrl }: { uploadUrl: string } = await response.json();
+    if (isWebAppPlatform()) {
+      await webUpload(file, uploadUrl, onProgress);
+    } else {
+      await tauriUpload(uploadUrl, fileFullPath, 'PUT', onProgress);
+    }
+  } catch (error) {
+    console.error('Replica file upload failed:', error);
+    if (error instanceof Error) throw error;
+    throw new Error('Replica file upload failed');
   }
 };
 
@@ -149,10 +194,15 @@ export const downloadFile = async ({
     }
 
     if (isWebAppPlatform()) {
-      const file = await webDownload(downloadUrl, onProgress, headers);
-      await appService.writeFile(dst, 'None', await file.arrayBuffer());
+      const { headers: responseHeaders, blob } = await webDownload(
+        downloadUrl,
+        onProgress,
+        headers,
+      );
+      await appService.writeFile(dst, 'None', await blob.arrayBuffer());
+      return responseHeaders;
     } else {
-      await tauriDownload(
+      return await tauriDownload(
         downloadUrl,
         dst,
         onProgress,
@@ -215,6 +265,8 @@ export interface FileRecord {
   file_key: string;
   file_size: number;
   book_hash: string | null;
+  replica_kind: string | null;
+  replica_id: string | null;
   created_at: string;
   updated_at: string | null;
 }

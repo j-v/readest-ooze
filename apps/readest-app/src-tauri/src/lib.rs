@@ -22,9 +22,14 @@ use tauri_plugin_fs::FsExt;
 
 #[cfg(desktop)]
 use tauri::{Listener, Url};
+mod dir_scanner;
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+mod discord_rpc;
 #[cfg(target_os = "macos")]
 mod macos;
 mod transfer_file;
+#[cfg(target_os = "windows")]
+use tauri::webview::ScrollBarStyle;
 use tauri::{command, Emitter, WebviewUrl, WebviewWindowBuilder, Window};
 #[cfg(target_os = "android")]
 use tauri_plugin_native_bridge::register_select_directory_callback;
@@ -41,14 +46,14 @@ fn allow_file_in_scopes(app: &AppHandle, files: Vec<PathBuf>) {
     let asset_protocol_scope = app.asset_protocol_scope();
     for file in &files {
         if let Err(e) = fs_scope.allow_file(file) {
-            eprintln!("Failed to allow file in fs_scope: {e}");
+            log::error!("Failed to allow file in fs_scope: {e}");
         } else {
-            println!("Allowed file in fs_scope: {file:?}");
+            log::debug!("Allowed file in fs_scope: {file:?}");
         }
         if let Err(e) = asset_protocol_scope.allow_file(file) {
-            eprintln!("Failed to allow file in asset_protocol_scope: {e}");
+            log::error!("Failed to allow file in asset_protocol_scope: {e}");
         } else {
-            println!("Allowed file in asset_protocol_scope: {file:?}");
+            log::debug!("Allowed file in asset_protocol_scope: {file:?}");
         }
     }
 }
@@ -57,14 +62,14 @@ fn allow_dir_in_scopes(app: &AppHandle, dir: &PathBuf) {
     let fs_scope = app.fs_scope();
     let asset_protocol_scope = app.asset_protocol_scope();
     if let Err(e) = fs_scope.allow_directory(dir, true) {
-        eprintln!("Failed to allow directory in fs_scope: {e}");
+        log::error!("Failed to allow directory in fs_scope: {e}");
     } else {
-        println!("Allowed directory in fs_scope: {dir:?}");
+        log::info!("Allowed directory in fs_scope: {dir:?}");
     }
     if let Err(e) = asset_protocol_scope.allow_directory(dir, true) {
-        eprintln!("Failed to allow directory in asset_protocol_scope: {e}");
+        log::error!("Failed to allow directory in asset_protocol_scope: {e}");
     } else {
-        println!("Allowed directory in asset_protocol_scope: {dir:?}");
+        log::info!("Allowed directory in asset_protocol_scope: {dir:?}");
     }
 }
 
@@ -147,6 +152,13 @@ struct SingleInstancePayload {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(log::LevelFilter::Info)
+                .level_for("tracing", log::LevelFilter::Warn)
+                .level_for("tantivy", log::LevelFilter::Warn)
+                .build(),
+        )
         .plugin(tauri_plugin_websocket::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_oauth::init())
@@ -156,12 +168,17 @@ pub fn run() {
             upload_file,
             get_environment_variable,
             get_executable_dir,
+            dir_scanner::read_dir,
             #[cfg(target_os = "macos")]
             macos::safari_auth::auth_with_safari,
             #[cfg(target_os = "macos")]
             macos::apple_auth::start_apple_sign_in,
             #[cfg(target_os = "macos")]
             macos::traffic_light::set_traffic_lights,
+            #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+            discord_rpc::update_book_presence,
+            #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+            discord_rpc::clear_book_presence,
         ])
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_persisted_scope::init())
@@ -171,22 +188,29 @@ pub fn run() {
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_sharekit::init())
+        .plugin(tauri_plugin_device_info::init())
+        .plugin(tauri_plugin_turso::init())
         .plugin(tauri_plugin_native_bridge::init())
-        .plugin(tauri_plugin_native_tts::init());
+        .plugin(tauri_plugin_native_tts::init())
+        .plugin(tauri_plugin_webview_upgrade::init());
 
     #[cfg(desktop)]
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
-        let _ = app
-            .get_webview_window("main")
-            .expect("no main window")
-            .set_focus();
-        let files = get_files_from_argv(argv.clone());
-        if !files.is_empty() {
-            allow_file_in_scopes(app, files.clone());
-        }
-        app.emit("single-instance", SingleInstancePayload { args: argv, cwd })
-            .unwrap();
-    }));
+    let builder = builder.plugin(
+        tauri_plugin_single_instance::Builder::new()
+            .callback(move |app, argv, cwd| {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_focus();
+                }
+                let files = get_files_from_argv(argv.clone());
+                if !files.is_empty() {
+                    allow_file_in_scopes(app, files.clone());
+                }
+                app.emit("single-instance", SingleInstancePayload { args: argv, cwd })
+                    .unwrap();
+            })
+            .dbus_id("com.bilingify.readest".to_owned())
+            .build(),
+    );
 
     let builder = builder.plugin(tauri_plugin_deep_link::init());
 
@@ -208,8 +232,26 @@ pub fn run() {
     #[cfg(any(target_os = "ios", target_os = "android"))]
     let builder = builder.plugin(tauri_plugin_haptics::init());
 
+    #[cfg(feature = "webdriver")]
+    let builder = builder.plugin(tauri_plugin_webdriver::init());
+
     builder
         .setup(|#[allow(unused_variables)] app| {
+            // When running with the webdriver feature (E2E/integration tests),
+            // grant all default permissions to remote URLs (http://127.0.0.1:*)
+            // so that Vitest browser-mode tests can call plugin commands.
+            #[cfg(feature = "webdriver")]
+            {
+                use tauri::Manager;
+                app.add_capability(include_str!("../capabilities-extra/webdriver.json"))?;
+            }
+            #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+            {
+                use std::sync::{Arc, Mutex};
+                let discord_client = Arc::new(Mutex::new(discord_rpc::DiscordRpcClient::new()));
+                app.manage(discord_client);
+            }
+
             #[cfg(desktop)]
             {
                 let files = get_files_from_argv(std::env::args().collect());
@@ -233,46 +275,16 @@ pub fn run() {
                 allow_dir_in_scopes(app, path);
             });
 
-            #[cfg(desktop)]
-            {
-                app.handle().plugin(tauri_plugin_cli::init())?;
-
-                let app_handle = app.handle().clone();
-                app.listen("window-ready", move |_| {
-                    let webview = app_handle.get_webview_window("main").unwrap();
-                    webview
-                        .eval("window.__READEST_CLI_ACCESS = true;")
-                        .expect("Failed to set cli access config");
-
-                    #[cfg(target_os = "linux")]
-                    {
-                        let is_appimage = std::env::var("APPIMAGE").is_ok()
-                            || std::env::current_exe()
-                                .map(|path| path.to_string_lossy().contains("/tmp/.mount_"))
-                                .unwrap_or(false);
-
-                        let script =
-                            format!("window.__READEST_UPDATER_DISABLED = {};", !is_appimage);
-                        webview
-                            .eval(&script)
-                            .expect("Failed to set updater disabled config");
-                    }
-                });
-            }
-
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             {
                 use tauri_plugin_deep_link::DeepLinkExt;
                 let _ = app.deep_link().register_all();
             }
 
-            if let Err(e) = app.handle().plugin(
-                tauri_plugin_log::Builder::default()
-                    .level(log::LevelFilter::Info)
-                    .build(),
-            ) {
-                eprintln!("Failed to initialize tauri_plugin_log: {e}");
-            };
+            #[cfg(desktop)]
+            {
+                app.handle().plugin(tauri_plugin_cli::init())?;
+            }
 
             // Check for e-ink device on Android before building the window
             #[cfg(target_os = "android")]
@@ -280,15 +292,30 @@ pub fn run() {
             #[cfg(not(target_os = "android"))]
             let is_eink = false;
 
-            let eink_script = if is_eink {
-                "window.__READEST_IS_EINK = true;"
-            } else {
-                ""
-            };
+            #[cfg(desktop)]
+            let cli_access = true;
+            #[cfg(not(desktop))]
+            let cli_access = false;
+
+            #[cfg(target_os = "linux")]
+            let is_appimage = std::env::var("APPIMAGE").is_ok()
+                || std::env::current_exe()
+                    .map(|path| path.to_string_lossy().contains("/tmp/.mount_"))
+                    .unwrap_or(false);
+            #[cfg(not(target_os = "linux"))]
+            let is_appimage = false;
+
+            #[cfg(desktop)]
+            let updater_disabled = std::env::var("READEST_DISABLE_UPDATER").is_ok();
+            #[cfg(not(desktop))]
+            let updater_disabled = false;
 
             let init_script = format!(
                 r#"
-                    {eink_script}
+                    if ({is_eink}) window.__READEST_IS_EINK = true;
+                    if ({cli_access}) window.__READEST_CLI_ACCESS = true;
+                    if ({is_appimage}) window.__READEST_IS_APPIMAGE = true;
+                    if ({updater_disabled}) window.__READEST_UPDATER_DISABLED = true;
                     window.addEventListener('DOMContentLoaded', function() {{
                         document.documentElement.classList.add('edge-to-edge');
                         const isTauriLocal = window.location.protocol === 'tauri:' ||
@@ -310,7 +337,10 @@ pub fn run() {
                         }}
                     }});
                 "#,
-                eink_script = eink_script
+                is_eink = is_eink,
+                cli_access = cli_access,
+                is_appimage = is_appimage,
+                updater_disabled = updater_disabled
             );
 
             let app_handle = app.handle().clone();
@@ -347,7 +377,9 @@ pub fn run() {
                     true
                 });
 
-            #[cfg(desktop)]
+            #[cfg(target_os = "macos")]
+            let win_builder = win_builder.inner_size(1280.0, 800.0).resizable(true);
+            #[cfg(all(not(target_os = "macos"), desktop))]
             let win_builder = win_builder.inner_size(800.0, 600.0).resizable(true);
 
             #[cfg(target_os = "macos")]
@@ -366,7 +398,9 @@ pub fn run() {
 
                 #[cfg(target_os = "windows")]
                 {
-                    builder = builder.transparent(false);
+                    builder = builder
+                        .transparent(false)
+                        .scroll_bar_style(ScrollBarStyle::FluentOverlay);
                 }
                 #[cfg(target_os = "linux")]
                 {
@@ -378,9 +412,28 @@ pub fn run() {
                 builder
             };
 
-            win_builder.build().unwrap();
+            #[cfg(not(target_os = "macos"))]
+            {
+                win_builder.build().unwrap();
+            }
             // let win = win_builder.build().unwrap();
             // win.open_devtools();
+
+            #[cfg(target_os = "macos")]
+            {
+                let window = win_builder.build().unwrap();
+                // On macOS, closing a window (via Cmd+W or the red traffic light) should
+                // not quit the app — only Cmd+Q should. Hide the window instead so the
+                // app keeps running in the dock, and restore it when the user reopens
+                // the app from the dock.
+                let window_for_close = window.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = window_for_close.hide();
+                    }
+                });
+            }
 
             #[cfg(target_os = "macos")]
             macos::menu::setup_macos_menu(app.handle())?;
@@ -395,18 +448,34 @@ pub fn run() {
             #[allow(unused_variables)]
             |app_handle, event| {
                 #[cfg(target_os = "macos")]
-                if let tauri::RunEvent::Opened { urls } = event {
-                    let files = urls
-                        .into_iter()
-                        .filter_map(|url| url.to_file_path().ok())
-                        .collect::<Vec<_>>();
+                match event {
+                    tauri::RunEvent::Opened { urls } => {
+                        let files = urls
+                            .into_iter()
+                            .filter_map(|url| url.to_file_path().ok())
+                            .collect::<Vec<_>>();
 
-                    let app_handler_clone = app_handle.clone();
-                    allow_file_in_scopes(app_handle, files.clone());
-                    app_handle.listen("window-ready", move |_| {
-                        println!("Window is ready, proceeding to handle files.");
-                        set_window_open_with_files(&app_handler_clone, files.clone());
-                    });
+                        let app_handler_clone = app_handle.clone();
+                        allow_file_in_scopes(app_handle, files.clone());
+                        app_handle.listen("window-ready", move |_| {
+                            println!("Window is ready, proceeding to handle files.");
+                            set_window_open_with_files(&app_handler_clone, files.clone());
+                        });
+                    }
+                    // When the user reopens the app from the dock after closing all
+                    // windows, re-show the main window instead of leaving the dock
+                    // icon inert.
+                    tauri::RunEvent::Reopen {
+                        has_visible_windows: false,
+                        ..
+                    } => {
+                        if let Some(window) = app_handle.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                            let _ = window.unminimize();
+                        }
+                    }
+                    _ => {}
                 }
             },
         );

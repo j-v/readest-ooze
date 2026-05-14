@@ -1,10 +1,11 @@
 import clsx from 'clsx';
 import React from 'react';
-import Image from 'next/image';
 
 import { MdCheck, MdDownload } from 'react-icons/md';
+import { useRouter } from 'next/navigation';
 import { setAboutDialogVisible } from '@/components/AboutWindow';
 import { useEnv } from '@/context/EnvContext';
+import { useAuth } from '@/context/AuthContext';
 import { useReaderStore } from '@/store/readerStore';
 import { useLibraryStore } from '@/store/libraryStore';
 import { useSidebarStore } from '@/store/sidebarStore';
@@ -15,7 +16,8 @@ import { isWebAppPlatform } from '@/services/environment';
 import { eventDispatcher } from '@/utils/event';
 import { FIXED_LAYOUT_FORMATS } from '@/types/book';
 import { DOWNLOAD_READEST_URL } from '@/services/constants';
-import { setKOSyncSettingsWindowVisible } from '@/app/reader/components/KOSyncSettings';
+import { navigateToLogin } from '@/utils/nav';
+import { saveSysSettings, saveViewSettings } from '@/helpers/settings';
 import { setProofreadRulesVisibility } from '@/app/reader/components/ProofreadRules';
 import useBooksManager from '../../hooks/useBooksManager';
 import MenuItem from '@/components/MenuItem';
@@ -28,15 +30,12 @@ interface BookMenuProps {
 
 const BookMenu: React.FC<BookMenuProps> = ({ menuClassName, setIsDropdownOpen }) => {
   const _ = useTranslation();
-  const { envConfig } = useEnv();
+  const router = useRouter();
+  const { envConfig, appService } = useEnv();
+  const { user } = useAuth();
   const { settings } = useSettingsStore();
-  const {
-    bookKeys,
-    recreateViewer,
-    getViewSettings,
-    setViewSettings,
-    setShowOfflineAudioDownload,
-  } = useReaderStore();
+  const { bookKeys, recreateViewer, getViewSettings, setShowOfflineAudioDownload } =
+    useReaderStore();
   const { getVisibleLibrary } = useLibraryStore();
   const { openParallelView } = useBooksManager();
   const { sideBarBookKey } = useSidebarStore();
@@ -69,10 +68,11 @@ const BookMenu: React.FC<BookMenuProps> = ({ menuClassName, setIsDropdownOpen })
     setIsSortedTOC((prev) => !prev);
     setIsDropdownOpen?.(false);
     if (sideBarBookKey) {
-      const viewSettings = getViewSettings(sideBarBookKey)!;
-      viewSettings.sortedTOC = !isSortedTOC;
-      setViewSettings(sideBarBookKey, viewSettings);
-      recreateViewer(envConfig, sideBarBookKey);
+      saveViewSettings(envConfig, sideBarBookKey, 'sortedTOC', !isSortedTOC, true, false).then(
+        () => {
+          recreateViewer(envConfig, sideBarBookKey);
+        },
+      );
     }
   };
   const handleSetParallel = () => {
@@ -81,10 +81,6 @@ const BookMenu: React.FC<BookMenuProps> = ({ menuClassName, setIsDropdownOpen })
   };
   const handleUnsetParallel = () => {
     unsetParallel(bookKeys);
-    setIsDropdownOpen?.(false);
-  };
-  const showKoSyncSettingsWindow = () => {
-    setKOSyncSettingsWindowVisible(true);
     setIsDropdownOpen?.(false);
   };
   const showProofreadRulesWindow = () => {
@@ -103,6 +99,26 @@ const BookMenu: React.FC<BookMenuProps> = ({ menuClassName, setIsDropdownOpen })
     setShowOfflineAudioDownload(sideBarBookKey);
     setIsDropdownOpen?.(false);
   };
+  const handlePushReadwise = () => {
+    eventDispatcher.dispatch('readwise-push-all', { bookKey: sideBarBookKey });
+    setIsDropdownOpen?.(false);
+  };
+  const handlePushHardcoverNotes = () => {
+    eventDispatcher.dispatch('hardcover-push-notes', { bookKey: sideBarBookKey });
+    setIsDropdownOpen?.(false);
+  };
+  const handlePushHardcoverProgress = () => {
+    eventDispatcher.dispatch('hardcover-push-progress', { bookKey: sideBarBookKey });
+    setIsDropdownOpen?.(false);
+  };
+  const toggleDiscordPresence = () => {
+    const discordRichPresenceEnabled = !settings.discordRichPresenceEnabled;
+    saveSysSettings(envConfig, 'discordRichPresenceEnabled', discordRichPresenceEnabled);
+    setIsDropdownOpen?.(false);
+    if (discordRichPresenceEnabled && !user) {
+      navigateToLogin(router);
+    }
+  };
 
   return (
     <Menu
@@ -112,15 +128,8 @@ const BookMenu: React.FC<BookMenuProps> = ({ menuClassName, setIsDropdownOpen })
       <MenuItem
         label={_('Parallel Read')}
         buttonClass={bookKeys.length > 1 ? 'lg:tooltip lg:tooltip-bottom' : ''}
-        tooltip={parallelViews.length > 0 ? _('Disable') : bookKeys.length > 1 ? _('Enable') : ''}
+        tooltip={parallelViews.length > 0 ? _('Disable') : _('Enable')}
         Icon={parallelViews.length > 0 && bookKeys.length > 1 ? MdCheck : undefined}
-        onClick={
-          parallelViews.length > 0
-            ? handleUnsetParallel
-            : bookKeys.length > 1
-              ? handleSetParallel
-              : undefined
-        }
       >
         <ul className='max-h-60 overflow-y-auto'>
           {getVisibleLibrary()
@@ -131,7 +140,7 @@ const BookMenu: React.FC<BookMenuProps> = ({ menuClassName, setIsDropdownOpen })
               <MenuItem
                 key={book.hash}
                 Icon={
-                  <Image
+                  <img
                     src={book.coverImageUrl!}
                     alt={book.title}
                     width={56}
@@ -158,16 +167,46 @@ const BookMenu: React.FC<BookMenuProps> = ({ menuClassName, setIsDropdownOpen })
       <hr className='border-base-200 my-1' />
       <MenuItem label={_('Offline Audio')} Icon={MdDownload} onClick={handleShowOfflineAudio} />
       <hr className='border-base-200 my-1' />
-      <MenuItem label={_('KOReader Sync')} onClick={showKoSyncSettingsWindow} />
+      {(settings.kosync.enabled || settings.readwise.enabled || settings.hardcover.enabled) && (
+        <hr aria-hidden='true' className='border-base-200 my-1' />
+      )}
       {settings.kosync.enabled && (
+        <MenuItem label={_('KOReader Sync')} detailsOpen={false} buttonClass='py-2'>
+          <ul className='flex flex-col ps-1'>
+            <MenuItem label={_('Push Progress')} noIcon onClick={handlePushKOSync} />
+            <MenuItem label={_('Pull Progress')} noIcon onClick={handlePullKOSync} />
+          </ul>
+        </MenuItem>
+      )}
+      {settings.readwise.enabled && (
+        <MenuItem label={_('Readwise Sync')} detailsOpen={false} buttonClass='py-2'>
+          <ul className='flex flex-col ps-1'>
+            <MenuItem label={_('Push Highlights')} noIcon onClick={handlePushReadwise} />
+          </ul>
+        </MenuItem>
+      )}
+      {settings.hardcover.enabled && (
+        <MenuItem label={_('Hardcover Sync')} detailsOpen={false} buttonClass='py-2'>
+          <ul className='flex flex-col ps-1'>
+            <MenuItem label={_('Push Progress')} noIcon onClick={handlePushHardcoverProgress} />
+            <MenuItem label={_('Push Notes')} noIcon onClick={handlePushHardcoverNotes} />
+          </ul>
+        </MenuItem>
+      )}
+      {appService?.isDesktopApp && (
         <>
-          <MenuItem label={_('Push Progress')} onClick={handlePushKOSync} />
-          <MenuItem label={_('Pull Progress')} onClick={handlePullKOSync} />
+          <hr aria-hidden='true' className='border-base-200 my-1' />
+          <MenuItem
+            label={_('Show on Discord')}
+            tooltip={_("Display what I'm reading on Discord")}
+            toggled={settings.discordRichPresenceEnabled}
+            onClick={toggleDiscordPresence}
+          />
         </>
       )}
-      <hr className='border-base-200 my-1' />
+      <hr aria-hidden='true' className='border-base-200 my-1' />
       <MenuItem label={_('Proofread')} onClick={showProofreadRulesWindow} />
-      <hr className='border-base-200 my-1' />
+      <hr aria-hidden='true' className='border-base-200 my-1' />
       <MenuItem label={_('Export Annotations')} onClick={handleExportAnnotations} />
       <MenuItem
         label={_('Sort TOC by Page')}
@@ -175,7 +214,7 @@ const BookMenu: React.FC<BookMenuProps> = ({ menuClassName, setIsDropdownOpen })
         onClick={handleToggleSortTOC}
       />
       <MenuItem label={_('Reload Page')} shortcut='Shift+R' onClick={handleReloadPage} />
-      <hr className='border-base-200 my-1' />
+      <hr aria-hidden='true' className='border-base-200 my-1' />
       {isWebAppPlatform() && <MenuItem label={_('Download Readest')} onClick={downloadReadest} />}
       <MenuItem label={_('About Readest')} onClick={showAboutReadest} />
     </Menu>

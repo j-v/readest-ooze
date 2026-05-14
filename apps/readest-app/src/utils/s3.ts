@@ -1,5 +1,11 @@
 import { S3Client } from '@aws-sdk/client-s3';
-import { GetObjectCommand, DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+import {
+  GetObjectCommand,
+  DeleteObjectCommand,
+  PutObjectCommand,
+  HeadObjectCommand,
+  CopyObjectCommand,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const S3_ENDPOINT = process.env['S3_ENDPOINT'] || '';
@@ -17,7 +23,6 @@ export const s3Client = new S3Client({
   },
 });
 
-
 export const s3Storage = {
   getClient: () => {
     return new S3Client({
@@ -31,12 +36,7 @@ export const s3Storage = {
     });
   },
 
-  getDownloadSignedUrl: async (
-    bucketName: string,
-    fileKey: string,
-    expiresIn: number,
-  ) => {
-
+  getDownloadSignedUrl: async (bucketName: string, fileKey: string, expiresIn: number) => {
     const getCommand = new GetObjectCommand({
       Bucket: bucketName,
       Key: fileKey,
@@ -53,7 +53,6 @@ export const s3Storage = {
     contentLength: number,
     expiresIn: number,
   ) => {
-
     const signableHeaders = new Set<string>();
     signableHeaders.add('content-length');
     const putCommand = new PutObjectCommand({
@@ -77,5 +76,35 @@ export const s3Storage = {
     });
 
     return await s3Storage.getClient().send(deleteCommand);
+  },
+
+  headObject: async (bucketName: string, fileKey: string) => {
+    const headCommand = new HeadObjectCommand({
+      Bucket: bucketName,
+      Key: fileKey,
+    });
+
+    return await s3Storage.getClient().send(headCommand);
+  },
+
+  copyObject: async (
+    bucketName: string,
+    sourceFileKey: string,
+    destFileKey: string,
+    sourceBucketName?: string,
+  ) => {
+    const srcBucket = sourceBucketName || bucketName;
+    // S3 requires CopySource to be URL-encoded segment-by-segment. file_key
+    // is built from the original filename, so spaces and reserved chars
+    // (e.g. `My Book.epub`, `A&B.epub`) are common and would otherwise
+    // break the copy.
+    const encodeKey = (key: string): string => key.split('/').map(encodeURIComponent).join('/');
+    const copyCommand = new CopyObjectCommand({
+      Bucket: bucketName,
+      Key: destFileKey,
+      CopySource: `${srcBucket}/${encodeKey(sourceFileKey)}`,
+    });
+
+    return await s3Storage.getClient().send(copyCommand);
   },
 };

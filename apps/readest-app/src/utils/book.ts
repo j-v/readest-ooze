@@ -1,7 +1,7 @@
 import { BookMetadata, EXTS } from '@/libs/document';
 import { Book, BookConfig, BookProgress, WritingMode } from '@/types/book';
 import { SUPPORTED_LANGS } from '@/services/constants';
-import { getUserLang, makeSafeFilename } from './misc';
+import { getLocale, getUserLang, makeSafeFilename } from './misc';
 import { getStorageType } from './storage';
 import { getDirFromLanguage } from './rtl';
 import { code6392to6391, isValidLang, normalizedLangCode } from './lang';
@@ -35,6 +35,9 @@ export const getCoverFilename = (book: Book) => {
 export const getConfigFilename = (book: Book) => {
   return `${book.hash}/config.json`;
 };
+export const getBookNavFilename = (book: Book) => {
+  return `${book.hash}/nav.json`;
+};
 export const isBookFile = (filename: string) => {
   return Object.values(EXTS).includes(filename.split('.').pop()!);
 };
@@ -54,6 +57,11 @@ export interface Identifier {
 
 export interface Contributor {
   name: LanguageMap;
+}
+
+export interface Collection {
+  name: string;
+  position?: string;
 }
 
 const formatLanguageMap = (x: string | LanguageMap, defaultLang = false): string => {
@@ -133,6 +141,15 @@ export const formatTitle = (title: string | LanguageMap) => {
   return typeof title === 'string' ? title : formatLanguageMap(title);
 };
 
+export const formatDescription = (description?: string | LanguageMap) => {
+  if (!description) return '';
+  const text = typeof description === 'string' ? description : formatLanguageMap(description);
+  return text
+    .replace(/<\/?[^>]+(>|$)/g, '')
+    .replace(/&#\d+;/g, '')
+    .trim();
+};
+
 export const formatPublisher = (publisher: string | LanguageMap) => {
   return typeof publisher === 'string' ? publisher : formatLanguageMap(publisher);
 };
@@ -170,6 +187,11 @@ export const formatDate = (date: string | number | Date | null | undefined, isUT
   } catch {
     return;
   }
+};
+
+export const formatLocaleDateTime = (date: number | Date) => {
+  const userLang = getLocale();
+  return new Date(date).toLocaleString(userLang);
 };
 
 export const formatBytes = (bytes?: number | null, locale = 'en-US') => {
@@ -286,16 +308,29 @@ const getIdentifiersList = (
       : [identifiers.value];
 };
 
-export const getMetadataHash = (metadata: BookMetadata) => {
+export interface MetadataHashInfo {
+  title: string;
+  authors: string[];
+  identifiers: string[];
+  hashSource: string;
+  metaHash: string;
+}
+
+export const getMetadataHashInfo = (metadata: BookMetadata): MetadataHashInfo | undefined => {
+  if (!metadata) return;
   try {
     const title = getTitleForHash(metadata.title);
-    const authors = getAuthorsList(metadata.author).join(',');
-    const identifiers = getIdentifiersList(metadata.altIdentifier || metadata.identifier).join(',');
-    const hashSource = `${title}|${authors}|${identifiers}`;
+    const authors = getAuthorsList(metadata.author);
+    const identifiers = getIdentifiersList(metadata.altIdentifier || metadata.identifier);
+    const hashSource = `${title}|${authors.join(',')}|${identifiers.join(',')}`;
     const metaHash = md5(hashSource.normalize('NFC'));
-    return metaHash;
+    return { title, authors, identifiers, hashSource, metaHash };
   } catch (error) {
     console.error('Error generating metadata hash:', error);
   }
   return;
+};
+
+export const getMetadataHash = (metadata: BookMetadata) => {
+  return getMetadataHashInfo(metadata)?.metaHash;
 };

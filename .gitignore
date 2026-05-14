@@ -1,4 +1,5 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+docker/.env
 
 # dependencies
 /node_modules
@@ -40,8 +41,16 @@ next-env.d.ts
 target
 
 fastlane/report.xml
+fastlane/metadata/android/en-US/changelogs
 
 *.koplugin.zip
 
 # nix
 result*
+
+.playwright-mcp/
+.gstack
+
+.claude/worktrees
+.claude/settings.local.json
+

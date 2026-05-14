@@ -1,5 +1,6 @@
 import { OsPlatform } from '@/types/system';
 import { md5 } from 'js-md5';
+import { isCaselessLang } from './lang';
 
 export const uniqueId = () => Math.random().toString(36).substring(2, 9);
 
@@ -9,7 +10,7 @@ export const getContentMd5 = (content: unknown) => md5(JSON.stringify(content));
 
 export const makeSafeFilename = (filename: string, replacement = '_') => {
   // Windows restricted characters + control characters and reserved names
-  const unsafeCharacters = /[<>:%"\/\\|?*\x00-\x1F]/g;
+  const unsafeCharacters = /[<>:%#"\/\\|?*\x00-\x1F]/g;
   const reservedFilenames = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
   // Unsafe to use filename including file extensions over 255 bytes on Android
   const maxFilenameBytes = 250;
@@ -32,7 +33,11 @@ export const makeSafeFilename = (filename: string, replacement = '_') => {
 };
 
 export const getLocale = () => {
-  return localStorage?.getItem('i18nextLng') || navigator?.language || '';
+  const locale = localStorage?.getItem('i18nextLng') || navigator?.language || '';
+  // POSIX locale values (e.g. 'C', 'C.UTF-8', 'POSIX') are not valid BCP 47
+  // tags and would cause Intl/toLocaleString to throw — fall back to en-US
+  if (!locale || /^(C|POSIX)(\..*)?$/i.test(locale)) return 'en-US';
+  return locale;
 };
 
 export const getUserLang = () => {
@@ -54,6 +59,21 @@ export const isCJKEnv = () => {
   const isCJKUI = ['zh', 'ja', 'ko'].some((lang) => uiLanguage.startsWith(lang));
   const isCJKLocale = ['zh', 'ja', 'ko'].some((lang) => browserLanguage.startsWith(lang));
   return isCJKLocale || isCJKUI;
+};
+
+/**
+ * True when the active UI language uses a script with no upper/lower case
+ * distinction (CJK, Arabic-script, Hebrew, major Indic scripts, Thai,
+ * Tibetan). Use this to opt out of UI rules that depend on the `uppercase`
+ * CSS property for emphasis — those rules render as no-ops in caseless
+ * scripts and the affected text needs alternate visual weight (typically a
+ * larger font-size). Reads the active i18next locale from localStorage and
+ * falls back to navigator.language. Source list lives in `isCaselessLang`
+ * (utils/lang.ts).
+ */
+export const isCaselessUILang = () => {
+  const uiLanguage = localStorage?.getItem('i18nextLng') || navigator.language || '';
+  return isCaselessLang(uiLanguage);
 };
 
 export const getUserLocale = (lang: string): string | undefined => {

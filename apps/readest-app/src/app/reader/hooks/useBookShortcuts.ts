@@ -1,17 +1,20 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useReaderStore } from '@/store/readerStore';
 import { useNotebookStore } from '@/store/notebookStore';
 import { isTauriAppPlatform } from '@/services/environment';
 import { useSidebarStore } from '@/store/sidebarStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useBookDataStore } from '@/store/bookDataStore';
-import { getStyles } from '@/utils/style';
+import { useCommandPalette } from '@/components/command-palette';
 import { tauriHandleClose, tauriHandleToggleFullScreen, tauriQuitApp } from '@/utils/window';
 import { eventDispatcher } from '@/utils/event';
+import { setShortcutsDialogVisible } from '@/components/KeyboardShortcutsHelp';
 import { MAX_ZOOM_LEVEL, MIN_ZOOM_LEVEL, ZOOM_STEP } from '@/services/constants';
+import { getParagraphActionForKey } from '@/utils/paragraphPresentation';
 import { viewPagination } from './usePagination';
 import useShortcuts from '@/hooks/useShortcuts';
 import useBooksManager from './useBooksManager';
+import { getReadingRulerMoveDirection } from '../utils/readingRuler';
 
 interface UseBookShortcutsProps {
   sideBarBookKey: string | null;
@@ -25,10 +28,24 @@ const useBookShortcuts = ({ sideBarBookKey, bookKeys }: UseBookShortcutsProps) =
   const { getBookData } = useBookDataStore();
   const { toggleNotebook } = useNotebookStore();
   const { getNextBookKey } = useBooksManager();
+  const { open: openCommandPalette } = useCommandPalette();
+  const lastParagraphToggleRef = useRef(0);
   const viewSettings = getViewSettings(sideBarBookKey ?? '');
   const fontSize = viewSettings?.defaultFontSize ?? 16;
   const lineHeight = viewSettings?.lineHeight ?? 1.6;
   const distance = fontSize * lineHeight * 3;
+
+  const moveReadingRuler = (side: 'left' | 'right' | 'up' | 'down') => {
+    if (!sideBarBookKey) return false;
+
+    const viewSettings = getViewSettings(sideBarBookKey);
+    if (!viewSettings?.readingRulerEnabled) return false;
+
+    return eventDispatcher.dispatchSync('reading-ruler-move', {
+      bookKey: sideBarBookKey,
+      direction: getReadingRulerMoveDirection(side, getView(sideBarBookKey)?.book.dir),
+    });
+  };
 
   const toggleScrollMode = () => {
     const viewSettings = getViewSettings(sideBarBookKey ?? '');
@@ -38,6 +55,7 @@ const useBookShortcuts = ({ sideBarBookKey, bookKeys }: UseBookShortcutsProps) =
       const flowMode = viewSettings.scrolled ? 'scrolled' : 'paginated';
       getView(sideBarBookKey)?.renderer.setAttribute('flow', flowMode);
     }
+    return true;
   };
 
   const switchSideBar = () => {
@@ -46,12 +64,62 @@ const useBookShortcuts = ({ sideBarBookKey, bookKeys }: UseBookShortcutsProps) =
 
   const goLeft = () => {
     const viewSettings = getViewSettings(sideBarBookKey ?? '');
-    viewPagination(getView(sideBarBookKey), viewSettings, 'left');
+    // If paragraph mode is enabled, navigate to previous paragraph instead
+    if (viewSettings?.paragraphMode?.enabled && sideBarBookKey) {
+      const action = getParagraphActionForKey('ArrowLeft', viewSettings);
+      eventDispatcher.dispatch(action === 'next' ? 'paragraph-next' : 'paragraph-prev', {
+        bookKey: sideBarBookKey,
+      });
+      return;
+    }
+    if (moveReadingRuler('left')) return;
+    viewPagination(getView(sideBarBookKey), viewSettings, 'left', 'pan', distance);
   };
 
   const goRight = () => {
     const viewSettings = getViewSettings(sideBarBookKey ?? '');
-    viewPagination(getView(sideBarBookKey), viewSettings, 'right');
+    // If paragraph mode is enabled, navigate to next paragraph instead
+    if (viewSettings?.paragraphMode?.enabled && sideBarBookKey) {
+      const action = getParagraphActionForKey('ArrowRight', viewSettings);
+      eventDispatcher.dispatch(action === 'prev' ? 'paragraph-prev' : 'paragraph-next', {
+        bookKey: sideBarBookKey,
+      });
+      return;
+    }
+    if (moveReadingRuler('right')) return;
+    viewPagination(getView(sideBarBookKey), viewSettings, 'right', 'pan', distance);
+  };
+
+  const goUp = (event?: KeyboardEvent | MessageEvent) => {
+    const view = getView(sideBarBookKey);
+    const viewSettings = getViewSettings(sideBarBookKey ?? '');
+    // If paragraph mode is enabled, navigate to previous paragraph instead
+    if (viewSettings?.paragraphMode?.enabled && sideBarBookKey) {
+      const action = getParagraphActionForKey('ArrowUp', viewSettings);
+      eventDispatcher.dispatch(action === 'next' ? 'paragraph-next' : 'paragraph-prev', {
+        bookKey: sideBarBookKey,
+      });
+      return;
+    }
+    if (moveReadingRuler('up')) return;
+    if (view?.renderer.scrolled && event instanceof MessageEvent) return;
+    viewPagination(view, viewSettings, 'up', 'pan', distance);
+  };
+
+  const goDown = (event?: KeyboardEvent | MessageEvent) => {
+    const view = getView(sideBarBookKey);
+    const viewSettings = getViewSettings(sideBarBookKey ?? '');
+    // If paragraph mode is enabled, navigate to next paragraph instead
+    if (viewSettings?.paragraphMode?.enabled && sideBarBookKey) {
+      const action = getParagraphActionForKey('ArrowDown', viewSettings);
+      eventDispatcher.dispatch(action === 'prev' ? 'paragraph-prev' : 'paragraph-next', {
+        bookKey: sideBarBookKey,
+      });
+      return;
+    }
+    if (moveReadingRuler('down')) return;
+    if (view?.renderer.scrolled && event instanceof MessageEvent) return;
+    viewPagination(view, viewSettings, 'down', 'pan', distance);
   };
 
   const goPrevSection = () => {
@@ -75,37 +143,13 @@ const useBookShortcuts = ({ sideBarBookKey, bookKeys }: UseBookShortcutsProps) =
   };
 
   const goPrev = () => {
+    if (moveReadingRuler('up')) return;
     getView(sideBarBookKey)?.prev(distance);
   };
 
   const goNext = () => {
+    if (moveReadingRuler('down')) return;
     getView(sideBarBookKey)?.next(distance);
-  };
-
-  const goPrevArrowUp = (event?: KeyboardEvent | MessageEvent) => {
-    const view = getView(sideBarBookKey);
-    if (
-      view?.renderer.scrolled &&
-      event instanceof MessageEvent &&
-      event.data.type === 'iframe-keydown'
-    ) {
-      // already handled in the iframe for better smoothness
-      return;
-    }
-    view?.prev(distance);
-  };
-
-  const goNextArrowDown = (event?: KeyboardEvent | MessageEvent) => {
-    const view = getView(sideBarBookKey);
-    if (
-      view?.renderer.scrolled &&
-      event instanceof MessageEvent &&
-      event.data.type === 'iframe-keydown'
-    ) {
-      // already handled in the iframe for better smoothness
-      return;
-    }
-    view?.next(distance);
   };
 
   const goBack = () => {
@@ -166,11 +210,10 @@ const useBookShortcuts = ({ sideBarBookKey, bookKeys }: UseBookShortcutsProps) =
     const view = getView(sideBarBookKey);
     const bookData = getBookData(sideBarBookKey);
     const viewSettings = getViewSettings(sideBarBookKey)!;
-    viewSettings!.zoomLevel = zoomLevel;
-    setViewSettings(sideBarBookKey, viewSettings!);
-    view?.renderer.setStyles?.(getStyles(viewSettings!));
-    if (bookData?.bookDoc?.rendition?.layout === 'pre-paginated') {
+    if (bookData?.isFixedLayout) {
       view?.renderer.setAttribute('scale-factor', zoomLevel);
+      viewSettings!.zoomLevel = zoomLevel;
+      setViewSettings(sideBarBookKey, viewSettings!);
     }
   };
 
@@ -211,6 +254,15 @@ const useBookShortcuts = ({ sideBarBookKey, bookKeys }: UseBookShortcutsProps) =
     applyZoomLevel(100);
   };
 
+  const toggleToolbar = () => {
+    if (!sideBarBookKey) return;
+    // Don't intercept Enter when a button is focused (let native click fire)
+    const active = document.activeElement;
+    if (active && active.tagName === 'BUTTON') return;
+    const { hoveredBookKey, setHoveredBookKey } = useReaderStore.getState();
+    setHoveredBookKey(hoveredBookKey === sideBarBookKey ? '' : sideBarBookKey);
+  };
+
   const toggleTTS = () => {
     if (!sideBarBookKey) return;
     const bookKey = sideBarBookKey;
@@ -218,19 +270,68 @@ const useBookShortcuts = ({ sideBarBookKey, bookKeys }: UseBookShortcutsProps) =
     eventDispatcher.dispatch(viewState?.ttsEnabled ? 'tts-stop' : 'tts-speak', { bookKey });
   };
 
+  const ttsPlayPause = () => {
+    if (!sideBarBookKey) return false;
+    const viewState = getViewState(sideBarBookKey);
+    if (!viewState?.ttsEnabled) return false;
+    eventDispatcher.dispatch('tts-toggle-play', { bookKey: sideBarBookKey });
+    return true;
+  };
+
+  const ttsGoNextSentence = () => {
+    if (!sideBarBookKey) return;
+    eventDispatcher.dispatch('tts-forward', { bookKey: sideBarBookKey, byMark: true });
+  };
+
+  const ttsGoPreviousSentence = () => {
+    if (!sideBarBookKey) return;
+    eventDispatcher.dispatch('tts-backward', { bookKey: sideBarBookKey, byMark: true });
+  };
+
+  const ttsGoNextParagraph = () => {
+    if (!sideBarBookKey) return;
+    eventDispatcher.dispatch('tts-forward', { bookKey: sideBarBookKey, byMark: false });
+  };
+
+  const ttsGoPreviousParagraph = () => {
+    if (!sideBarBookKey) return;
+    eventDispatcher.dispatch('tts-backward', { bookKey: sideBarBookKey, byMark: false });
+  };
+
   const toggleBookmark = () => {
     if (!sideBarBookKey) return;
     eventDispatcher.dispatch('toggle-bookmark', { bookKey: sideBarBookKey });
+  };
+
+  const toggleParagraphMode = (event?: KeyboardEvent | MessageEvent) => {
+    if (!sideBarBookKey) return false;
+    if (event instanceof KeyboardEvent && event.repeat) return true;
+
+    const now = Date.now();
+    if (now - lastParagraphToggleRef.current < 300) return true;
+    lastParagraphToggleRef.current = now;
+
+    eventDispatcher.dispatch('toggle-paragraph-mode', { bookKey: sideBarBookKey });
+    return true;
+  };
+
+  const handlePinchZoom = (event: CustomEvent) => {
+    const zoomLevel = event.detail?.zoomLevel;
+    if (zoomLevel != null) {
+      applyZoomLevel(zoomLevel);
+    }
   };
 
   useEffect(() => {
     eventDispatcher.on('zoom-in', handleZoomIn);
     eventDispatcher.on('zoom-out', handleZoomOut);
     eventDispatcher.on('reset-zoom', resetZoom);
+    eventDispatcher.on('pinch-zoom', handlePinchZoom);
     return () => {
       eventDispatcher.off('zoom-in', handleZoomIn);
       eventDispatcher.off('zoom-out', handleZoomOut);
       eventDispatcher.off('reset-zoom', resetZoom);
+      eventDispatcher.off('pinch-zoom', handlePinchZoom);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sideBarBookKey]);
@@ -242,19 +343,26 @@ const useBookShortcuts = ({ sideBarBookKey, bookKeys }: UseBookShortcutsProps) =
       onToggleNotebook: toggleNotebook,
       onToggleScrollMode: toggleScrollMode,
       onToggleBookmark: toggleBookmark,
+      onToggleParagraphMode: toggleParagraphMode,
+      onToggleToolbar: toggleToolbar,
       onOpenFontLayoutSettings: () => setSettingsDialogOpen(true),
       onShowSearchBar: showSearchBar,
       onToggleFullscreen: toggleFullscreen,
       onToggleTTS: toggleTTS,
+      onTTSPlayPause: ttsPlayPause,
+      onTTSGoNextSentence: ttsGoNextSentence,
+      onTTSGoPreviousSentence: ttsGoPreviousSentence,
+      onTTSGoNextParagraph: ttsGoNextParagraph,
+      onTTSGoPreviousParagraph: ttsGoPreviousParagraph,
       onReloadPage: reloadPage,
       onCloseWindow: closeWindow,
       onQuitApp: quitApp,
       onGoLeft: goLeft,
       onGoRight: goRight,
+      onGoUp: goUp,
+      onGoDown: goDown,
       onGoPrev: goPrev,
       onGoNext: goNext,
-      onGoPrevArrowUp: goPrevArrowUp,
-      onGoNextArrowDown: goNextArrowDown,
       onGoHalfPageDown: goHalfPageDown,
       onGoHalfPageUp: goHalfPageUp,
       onGoPrevSection: goPrevSection,
@@ -266,6 +374,8 @@ const useBookShortcuts = ({ sideBarBookKey, bookKeys }: UseBookShortcutsProps) =
       onZoomIn: zoomIn,
       onZoomOut: zoomOut,
       onResetZoom: resetZoom,
+      onOpenCommandPalette: openCommandPalette,
+      onOpenShortcutsHelp: () => setShortcutsDialogVisible(true),
     },
     [sideBarBookKey, bookKeys],
   );

@@ -11,10 +11,11 @@ import { useEnv } from '@/context/EnvContext';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import { useTranslation } from '@/hooks/useTranslation';
+import { useSettingsStore } from '@/store/settingsStore';
 import { useResponsiveSize } from '@/hooks/useResponsiveSize';
 import { LibraryCoverFitType, LibraryViewModeType } from '@/types/settings';
 import { navigateToLogin } from '@/utils/nav';
-import { formatAuthors } from '@/utils/book';
+import { formatAuthors, formatDescription } from '@/utils/book';
 import ReadingProgress from './ReadingProgress';
 import BookCover from '@/components/BookCover';
 
@@ -45,6 +46,7 @@ const BookItem: React.FC<BookItemProps> = ({
   const router = useRouter();
   const { user } = useAuth();
   const { appService } = useEnv();
+  const { settings } = useSettingsStore();
   const iconSize15 = useResponsiveSize(15);
 
   return (
@@ -61,8 +63,8 @@ const BookItem: React.FC<BookItemProps> = ({
     >
       <div
         className={clsx(
-          'bookitem-main relative flex aspect-[28/41] justify-center rounded',
-          coverFit === 'crop' && 'overflow-hidden shadow-md',
+          'bookitem-main relative flex aspect-[28/41] justify-center overflow-hidden rounded',
+          coverFit === 'crop' && 'shadow-md',
           mode === 'grid' && 'items-end',
           mode === 'list' && 'min-w-20 items-center',
         )}
@@ -91,7 +93,7 @@ const BookItem: React.FC<BookItemProps> = ({
         className={clsx(
           'flex w-full flex-col p-0',
           mode === 'grid' && 'pt-2',
-          mode === 'list' && 'py-2',
+          mode === 'list' && 'gap-2 py-0',
         )}
       >
         <div className={clsx('min-w-0 flex-1', mode === 'list' && 'flex flex-col gap-2')}>
@@ -110,14 +112,22 @@ const BookItem: React.FC<BookItemProps> = ({
             </p>
           )}
         </div>
+        {mode === 'list' && (
+          <h4 className='text-neutral-content line-clamp-1 text-sm'>
+            {formatDescription(book.metadata?.description)}
+          </h4>
+        )}
         <div
-          className={clsx('flex items-center', book.progress ? 'justify-between' : 'justify-end')}
+          className={clsx(
+            'flex items-center',
+            book.progress || book.readingStatus ? 'justify-between' : 'justify-end',
+          )}
           style={{
             height: `${iconSize15}px`,
             minHeight: `${iconSize15}px`,
           }}
         >
-          {book.progress && <ReadingProgress book={book} />}
+          {(book.progress || book.readingStatus) && <ReadingProgress book={book} />}
           <div className='flex items-center justify-center gap-x-2'>
             {!appService?.isMobile && (
               <button
@@ -150,6 +160,7 @@ const BookItem: React.FC<BookItemProps> = ({
             ) : (
               (!book.uploadedAt || (book.uploadedAt && !book.downloadedAt)) && (
                 <button
+                  aria-label={!book.uploadedAt ? _('Upload Book') : _('Download Book')}
                   className='show-cloud-button -m-2 p-2'
                   onPointerDown={(e) => e.stopPropagation()}
                   onClick={() => {
@@ -164,7 +175,9 @@ const BookItem: React.FC<BookItemProps> = ({
                     }
                   }}
                 >
-                  {!book.uploadedAt && <LiaCloudUploadAltSolid size={iconSize15} />}
+                  {!book.uploadedAt && settings.autoUpload && (
+                    <LiaCloudUploadAltSolid size={iconSize15} />
+                  )}
                   {book.uploadedAt && !book.downloadedAt && (
                     <LiaCloudDownloadAltSolid size={iconSize15} />
                   )}

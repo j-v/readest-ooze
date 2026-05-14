@@ -1,8 +1,8 @@
 import clsx from 'clsx';
-import { useTranslation } from '@/hooks/useTranslation';
-import { IoFileTray } from 'react-icons/io5';
 import { MdRssFeed } from 'react-icons/md';
-
+import { IoFileTray } from 'react-icons/io5';
+import { useEnv } from '@/context/EnvContext';
+import { useTranslation } from '@/hooks/useTranslation';
 import MenuItem from '@/components/MenuItem';
 import Menu from '@/components/Menu';
 
@@ -20,6 +20,7 @@ const ImportMenu: React.FC<ImportMenuProps> = ({
   onOpenCatalogManager,
 }) => {
   const _ = useTranslation();
+  const { appService } = useEnv();
 
   const handleImportFromFiles = () => {
     onImportBooksFromFiles();
@@ -38,7 +39,7 @@ const ImportMenu: React.FC<ImportMenuProps> = ({
 
   return (
     <Menu
-      className={clsx('dropdown-content bg-base-100 rounded-box z-[1] mt-3 p-2 shadow')}
+      className={clsx('dropdown-content bg-base-100 rounded-box !relative z-[1] mt-3 p-2 shadow')}
       onCancel={() => setIsDropdownOpen?.(false)}
     >
       <MenuItem
@@ -54,7 +55,7 @@ const ImportMenu: React.FC<ImportMenuProps> = ({
         />
       )}
       <MenuItem
-        label={_('Online Library')}
+        label={appService?.isOnlineCatalogsAccessible ? _('Online Library') : _('OPDS Catalogs')}
         Icon={<MdRssFeed className='h-5 w-5' />}
         onClick={handleOpenCatalogManager}
       />

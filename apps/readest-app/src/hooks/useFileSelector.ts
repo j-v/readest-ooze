@@ -45,7 +45,9 @@ const selectFileTauri = async (
   appService: AppService,
   _: (key: string) => string,
 ): Promise<string[]> => {
-  const noFilter = appService?.isIOSApp || (appService?.isAndroidApp && options.type === 'books');
+  const noFilter =
+    appService?.isIOSApp ||
+    (appService?.isAndroidApp && (options.type === 'books' || options.type === 'dictionaries'));
   const exts = noFilter ? [] : options.extensions || [];
   const title = options.dialogTitle || _('Select Files');
   let files = (await appService?.selectFiles(_(title), exts)) || [];
@@ -138,6 +140,11 @@ export const FILE_SELECTION_PRESETS = {
     accept: '.ttf, .otf, .woff, .woff2',
     extensions: ['ttf', 'otf', 'woff', 'woff2'],
     dialogTitle: _('Select Fonts'),
+  },
+  dictionaries: {
+    accept: '.mdx, .mdd, .ifo, .idx, .dict, .dz, .syn, .index, .slob, .css',
+    extensions: ['mdx', 'mdd', 'ifo', 'idx', 'dict', 'dz', 'syn', 'index', 'slob', 'css'],
+    dialogTitle: _('Select Dictionary Files'),
   },
   covers: {
     accept: '.png, .jpg, .jpeg, .gif',

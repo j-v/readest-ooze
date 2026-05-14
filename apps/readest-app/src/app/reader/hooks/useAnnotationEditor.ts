@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import { BookNote } from '@/types/book';
-import { Point, TextSelection } from '@/utils/sel';
+import { Point, TextSelection, snapRangeToWords } from '@/utils/sel';
 import { useEnv } from '@/context/EnvContext';
 import { useReaderStore } from '@/store/readerStore';
 import { useSettingsStore } from '@/store/settingsStore';
@@ -27,7 +27,7 @@ export const useAnnotationEditor = ({
   const { envConfig } = useEnv();
   const { settings } = useSettingsStore();
   const { getConfig, saveConfig, updateBooknotes } = useBookDataStore();
-  const { getView, getViewsById } = useReaderStore();
+  const { getView, getProgress, getViewsById } = useReaderStore();
 
   const view = getView(bookKey);
   const editingAnnotationRef = useRef(annotation);
@@ -127,6 +127,8 @@ export const useAnnotationEditor = ({
           console.warn('Range is collapsed');
           return;
         }
+
+        snapRangeToWords(newRange);
       } catch (e) {
         console.warn('Failed to create range:', e);
         return;
@@ -142,14 +144,16 @@ export const useAnnotationEditor = ({
 
       if (newCfi && newText) {
         const config = getConfig(bookKey)!;
+        const progress = getProgress(bookKey)!;
         const { booknotes: annotations = [] } = config;
         const existingIndex = annotations.findIndex(
           (a) => a.id === editingAnnotationRef.current.id && !a.deletedAt,
         );
 
         if (existingIndex !== -1) {
+          const existingAnnotation = annotations[existingIndex]!;
           const updatedAnnotation: BookNote = {
-            ...annotations[existingIndex]!,
+            ...existingAnnotation,
             cfi: newCfi,
             text: newText,
             updatedAt: Date.now(),
@@ -172,8 +176,9 @@ export const useAnnotationEditor = ({
               annotated: true,
               text: newText,
               cfi: newCfi,
-              range: newRange,
               index: targetIndex,
+              range: newRange,
+              page: existingAnnotation.page || progress.page,
             });
           }
         }

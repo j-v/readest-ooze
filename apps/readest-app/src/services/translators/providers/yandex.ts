@@ -24,32 +24,35 @@ async function translateSingleTextForService(
       lang: lang,
       service: service,
       text: text,
-    })
+    }),
   };
 
   const response = await fetchImpl(url, request);
 
   if (!response.ok) {
     const response_json = JSON.stringify(await response.json());
-    throw new Error(`${service} failed with status ${response.status}\n${text.length}\n${JSON.stringify(request)}\n${response_json}`);
+    throw new Error(
+      `${service} failed with status ${response.status}\n${text.length}\n${JSON.stringify(request)}\n${response_json}`,
+    );
   }
 
   const data = await response.json();
-  if (
-    data &&
-    Array.isArray(data.translations)
-  ) {
+  if (data && Array.isArray(data.translations)) {
     return data.translations;
   } else {
     // fallback: return original texts if translation failed
     return [text];
   }
-};
+}
 
 export const yandexProvider: TranslationProvider = {
   name: 'yandex',
   label: _('Yandex Translate'),
   authRequired: false,
+  // The upstream translate.toil.cc relay is currently down. Keep the
+  // implementation in tree so we can re-enable it simply by flipping this
+  // flag to `false` (or deleting the line) once the service is healthy.
+  disabled: true,
   translate: async (texts: string[], sourceLang: string, targetLang: string): Promise<string[]> => {
     if (!texts.length) return [];
 
@@ -60,18 +63,21 @@ export const yandexProvider: TranslationProvider = {
       - yandextranslate
       - yandexbrowser
     */
-    const service = "yandexgpt";
+    const service = 'yandexgpt';
 
     // Yandex does not accept "auto" language
-    const source_lang = sourceLang == "AUTO" ? "en" : normalizeToShortLang(sourceLang).toLowerCase();
+    const source_lang =
+      sourceLang == 'AUTO' ? 'en' : normalizeToShortLang(sourceLang).toLowerCase();
     const target_lang = normalizeToShortLang(targetLang).toLowerCase();
     const lang = `${source_lang}-${target_lang}`;
 
-    const responses = await Promise.all(texts.map(async text => {
-      return await translateSingleTextForService(text, lang, service)
-    }));
+    const responses = await Promise.all(
+      texts.map(async (text) => {
+        return await translateSingleTextForService(text, lang, service);
+      }),
+    );
 
     const translatedTexts = responses.flat();
     return translatedTexts;
-  }
+  },
 };

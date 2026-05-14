@@ -20,7 +20,6 @@ interface ThemeState {
   systemIsDarkMode: boolean;
   themeCode: ThemeCode;
   isDarkMode: boolean;
-  isEinkMode: boolean;
   systemUIVisible: boolean;
   statusBarHeight: number;
   systemUIAlwaysHidden: boolean;
@@ -33,7 +32,6 @@ interface ThemeState {
   getIsDarkMode: () => boolean;
   setThemeMode: (mode: ThemeMode) => void;
   setThemeColor: (color: string) => void;
-  setIsEinkMode: (isEink: boolean) => void;
   updateAppTheme: (color: keyof Palette) => void;
   saveCustomTheme: (
     envConfig: EnvConfigType,
@@ -74,7 +72,6 @@ export const useThemeStore = create<ThemeState>((set, get) => {
     themeColor: initialThemeColor,
     systemIsDarkMode,
     isDarkMode,
-    isEinkMode: false,
     themeCode,
     systemUIVisible: false,
     statusBarHeight: 24,
@@ -86,9 +83,6 @@ export const useThemeStore = create<ThemeState>((set, get) => {
     setStatusBarHeight: (height: number) => set({ statusBarHeight: height }),
     setSystemUIAlwaysHidden: (hidden: boolean) => set({ systemUIAlwaysHidden: hidden }),
     getIsDarkMode: () => get().isDarkMode,
-    setIsEinkMode: (isEink: boolean) => {
-      set({ isEinkMode: isEink });
-    },
     setThemeMode: (mode) => {
       if (typeof window !== 'undefined' && localStorage) {
         localStorage.setItem('themeMode', mode);
@@ -140,7 +134,12 @@ export const useThemeStore = create<ThemeState>((set, get) => {
     handleSystemThemeChange: (systemIsDarkMode) => {
       const mode = get().themeMode;
       const isDarkMode = mode === 'dark' || (mode === 'auto' && systemIsDarkMode);
+      document.documentElement.setAttribute(
+        'data-theme',
+        `${get().themeColor}-${isDarkMode ? 'dark' : 'light'}`,
+      );
       set({ systemIsDarkMode, isDarkMode });
+      set({ themeCode: getThemeCode() });
     },
     updateSafeAreaInsets: (insets) => {
       set({ safeAreaInsets: insets });
@@ -174,6 +173,9 @@ export const initSystemThemeListener = (appService: AppService) => {
       systemIsDarkMode = res.colorScheme === 'dark';
     } else {
       systemIsDarkMode = mediaQuery.matches;
+    }
+    if (typeof window !== 'undefined' && localStorage) {
+      localStorage.setItem('systemIsDarkMode', systemIsDarkMode ? 'true' : 'false');
     }
     useThemeStore.getState().handleSystemThemeChange(systemIsDarkMode);
   };

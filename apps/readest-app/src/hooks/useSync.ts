@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useEnv } from '@/context/EnvContext';
 import { useSyncContext } from '@/context/SyncContext';
 import { SyncData, SyncOp, SyncResult, SyncType } from '@/libs/sync';
+import { isSyncCategoryEnabled } from '@/services/sync/syncCategories';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { transformBookConfigFromDB } from '@/utils/transform';
@@ -36,7 +38,8 @@ const computeMaxTimestamp = (records: BookDataRecord[]): number => {
 const ONE_DAY_IN_MS = 24 * 60 * 60 * 1000;
 export function useSync(bookKey?: string) {
   const router = useRouter();
-  const { settings, setSettings } = useSettingsStore();
+  const { envConfig } = useEnv();
+  const { settings, setSettings, saveSettings } = useSettingsStore();
   const { getConfig, setConfig } = useBookDataStore();
   const { setIsSyncing } = useReaderStore();
   const config = bookKey ? getConfig(bookKey) : null;
@@ -108,8 +111,8 @@ export function useSync(bookKey?: string) {
       const result = await syncClient.pullChanges(since, type, bookId, metaHash);
       setSyncResult({ ...syncResult, [type]: result[type] });
       const records = result[type];
-      if (since > 0 && !records?.length) return;
-      // For since = 0, we set lastSyncedAt to now if no records returned
+      if (since > 1000 && !records?.length) return 0;
+      // For since <= 1000, we set lastSyncedAt to now if no records returned
       const maxTime = records?.length ? computeMaxTimestamp(records) : Date.now();
       setLastSyncedAt(maxTime);
 
@@ -138,6 +141,7 @@ export function useSync(bookKey?: string) {
           }
           break;
       }
+      return records?.filter((rec) => !rec.deleted_at).length || 0;
     } catch (err: unknown) {
       console.error(err);
       if (err instanceof Error) {
@@ -150,18 +154,21 @@ export function useSync(bookKey?: string) {
       } else {
         setSyncError(`Error pulling ${type}`);
       }
+      return 0;
     } finally {
       setSyncing(false);
+      saveSettings(envConfig, settings);
     }
   };
 
-  const pushChanges = async (payload: SyncData) => {
+  const pushChanges = async (payload: SyncData): Promise<boolean> => {
     setSyncing(true);
     setSyncError(null);
 
     try {
       const result = await syncClient.pushChanges(payload);
       setSyncResult(result);
+      return true;
     } catch (err: unknown) {
       console.error(err);
       if (err instanceof Error) {
@@ -169,20 +176,28 @@ export function useSync(bookKey?: string) {
       } else {
         setSyncError('Error pushing changes');
       }
+      return false;
     } finally {
       setSyncing(false);
     }
   };
 
   const syncBooks = useCallback(
-    async (books?: Book[], op: SyncOp = 'both') => {
+    async (books?: Book[], op: SyncOp = 'both', since?: number) => {
       if (!lastSyncedAtInited) return;
+      if (!isSyncCategoryEnabled('book')) return;
       if ((op === 'push' || op === 'both') && books?.length) {
         await pushChanges({ books });
       }
       if (op === 'pull' || op === 'both') {
-        await pullChanges('books', lastSyncedAtBooks + 1, setLastSyncedAtBooks, setSyncingBooks);
+        return await pullChanges(
+          'books',
+          since ?? lastSyncedAtBooks + 1,
+          setLastSyncedAtBooks,
+          setSyncingBooks,
+        );
       }
+      return;
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [lastSyncedAtInited, lastSyncedAtBooks],
@@ -191,8 +206,12 @@ export function useSync(bookKey?: string) {
   const syncConfigs = useCallback(
     async (bookConfigs?: BookConfig[], bookId?: string, metaHash?: string, op: SyncOp = 'both') => {
       if (!bookId && !lastSyncedAtInited) return;
+      if (!isSyncCategoryEnabled('progress')) return;
       if ((op === 'push' || op === 'both') && bookConfigs?.length) {
-        await pushChanges({ configs: bookConfigs });
+        const pushed = await pushChanges({ configs: bookConfigs });
+        if (pushed && bookId && bookKey) {
+          setConfig(bookKey, { lastPushedAtConfig: Date.now() });
+        }
       }
       if (op === 'pull' || op === 'both') {
         await pullChanges(
@@ -212,8 +231,12 @@ export function useSync(bookKey?: string) {
   const syncNotes = useCallback(
     async (bookNotes?: BookNote[], bookId?: string, metaHash?: string, op: SyncOp = 'both') => {
       if (!lastSyncedAtInited) return;
+      if (!isSyncCategoryEnabled('note')) return;
       if ((op === 'push' || op === 'both') && bookNotes?.length) {
-        await pushChanges({ notes: bookNotes });
+        const pushed = await pushChanges({ notes: bookNotes });
+        if (pushed && bookId && bookKey) {
+          setConfig(bookKey, { lastPushedAtNotes: Date.now() });
+        }
       }
       if (op === 'pull' || op === 'both') {
         await pullChanges(

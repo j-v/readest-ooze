@@ -1,5 +1,6 @@
 import clsx from 'clsx';
-import React, { useState, isValidElement, ReactElement, ReactNode, useRef } from 'react';
+import React, { useState, isValidElement, ReactElement, ReactNode, useRef, useId } from 'react';
+import { useDropdownContext } from '@/context/DropdownContext';
 import { Overlay } from './Overlay';
 import MenuItem from './MenuItem';
 
@@ -8,6 +9,7 @@ interface DropdownProps {
   className?: string;
   menuClassName?: string;
   buttonClassName?: string;
+  containerClassName?: string;
   toggleButton: React.ReactNode;
   children: ReactElement<{
     setIsDropdownOpen: (isOpen: boolean) => void;
@@ -16,7 +18,12 @@ interface DropdownProps {
   }>;
   disabled?: boolean;
   onToggle?: (isOpen: boolean) => void;
+  showTooltip?: boolean;
 }
+
+type MenuItemProps = {
+  setIsDropdownOpen?: (open: boolean) => void;
+};
 
 const enhanceMenuItems = (
   children: ReactNode,
@@ -27,7 +34,7 @@ const enhanceMenuItems = (
       return node;
     }
 
-    const element = node as ReactElement;
+    const element = node as React.ReactElement<React.PropsWithChildren<MenuItemProps>>;
     const isMenuItem =
       element.type === MenuItem ||
       (typeof element.type === 'function' && element.type.name === 'MenuItem');
@@ -57,33 +64,29 @@ const Dropdown: React.FC<DropdownProps> = ({
   className,
   menuClassName,
   buttonClassName,
+  containerClassName,
   toggleButton,
   children,
   disabled,
   onToggle,
+  showTooltip = true,
 }) => {
-  const [isOpen, setIsOpen] = useState(false);
-  const [isFocused, setIsFocused] = useState(false);
-  const lastInteractionWasTapOrClick = useRef(false);
+  const dropdownId = useId();
+  const context = useDropdownContext();
+  const isOpen = context ? context.openDropdownId === dropdownId : false;
   const containerRef = useRef<HTMLDivElement>(null);
+  const [isFocused, setIsFocused] = useState(false);
 
   const setIsDropdownOpen = (open: boolean) => {
     if (disabled) return;
-    setIsOpen(open);
-    onToggle?.(open);
-  };
-
-  const handleTouchOrClick = () => {
-    lastInteractionWasTapOrClick.current = true;
-    setTimeout(() => (lastInteractionWasTapOrClick.current = false), 100);
-  };
-
-  const handleFocus = () => {
-    setIsFocused(true);
-    // skip touch and pointer triggered focus, this is only for keyboard and aria navigation
-    if (!lastInteractionWasTapOrClick.current) {
-      setIsDropdownOpen(true);
+    if (context) {
+      if (open) {
+        context.openDropdown(dropdownId);
+      } else {
+        context.closeDropdown(dropdownId);
+      }
     }
+    onToggle?.(open);
   };
 
   const toggleDropdown = () => {
@@ -91,20 +94,13 @@ const Dropdown: React.FC<DropdownProps> = ({
     setIsDropdownOpen(!isOpen);
   };
 
-  const handleBlur = (e: React.FocusEvent) => {
-    if (process.env.NODE_ENV === 'development') {
-      return;
-    }
-    if (!containerRef.current) return;
-    if (!containerRef.current.contains(e.relatedTarget as Node)) {
-      setIsFocused(false);
-      setIsDropdownOpen(false);
-    }
-  };
-
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' || e.key === ' ') {
-      if (!isOpen) setIsDropdownOpen(true);
+      // Let the native button click (dispatched by the browser for Enter/Space
+      // on a focused button) drive the toggle — toggling here would race with
+      // that click and cancel it out. We still stop propagation so global
+      // shortcuts bound to Enter/Space (e.g. next page in the reader) don't
+      // fire while a dropdown button is focused.
       e.stopPropagation();
     } else if (e.key === 'Escape') {
       setIsDropdownOpen(false);
@@ -123,36 +119,33 @@ const Dropdown: React.FC<DropdownProps> = ({
     : children;
 
   return (
-    <div className='dropdown-container flex'>
+    <div ref={containerRef} className={clsx('dropdown-container flex', containerClassName)}>
       {isOpen && <Overlay onDismiss={() => setIsDropdownOpen(false)} />}
-      <div
-        ref={containerRef}
-        role='menu'
-        tabIndex={-1}
-        onBlur={handleBlur}
-        onKeyDown={handleKeyDown}
-        className={clsx('dropdown flex flex-col', className)}
-      >
+      <div className={clsx('relative', isOpen && 'z-50')}>
         <button
+          tabIndex={0}
           aria-haspopup='menu'
           aria-expanded={isOpen}
           aria-label={label}
-          title={label}
+          title={showTooltip ? label : undefined}
           className={clsx(
-            'dropdown-toggle',
+            'dropdown-toggle touch-target',
             isFocused && isOpen && 'bg-base-300/50',
             buttonClassName,
           )}
-          onTouchStart={handleTouchOrClick}
-          onPointerDown={handleTouchOrClick}
-          onFocus={handleFocus}
           onClick={toggleDropdown}
+          onKeyDown={handleKeyDown}
         >
           {toggleButton}
         </button>
-        <div role='none' className={clsx('flex items-center justify-center')}>
+        <details
+          open={isOpen}
+          role='none'
+          className={clsx('dropdown flex items-center justify-center', className)}
+        >
+          <summary aria-hidden='true' className='list-none' />
           {isOpen && childrenWithToggle}
-        </div>
+        </details>
       </div>
     </div>
   );

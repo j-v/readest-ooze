@@ -25,6 +25,7 @@ export interface Position {
 export interface TextSelection {
   key: string;
   text: string;
+  page: number;
   range: Range;
   index: number;
   cfi?: string;
@@ -74,11 +75,20 @@ const constrainPointWithinRect = (point: Point, rect: Rect, padding: number) => 
   };
 };
 
+export const isPointInRect = (point: Point, rect: Rect, padding: number = 1): boolean => {
+  return (
+    point.x >= rect.left + padding &&
+    point.x <= rect.right - padding &&
+    point.y >= rect.top + padding &&
+    point.y <= rect.bottom - padding
+  );
+};
+
 export const isPointerInsideSelection = (selection: Selection, ev: PointerEvent) => {
   if (selection.rangeCount === 0) return false;
   const range = selection.getRangeAt(0);
   const rects = range.getClientRects();
-  const padding = 80;
+  const padding = 50;
   for (let i = 0; i < rects.length; i++) {
     const rect = rects[i]!;
     if (
@@ -220,24 +230,83 @@ export const getPopupPosition = (
   return { point: popupPoint, dir: position.dir } as Position;
 };
 
+export const snapRangeToWords = (range: Range): void => {
+  if (typeof Intl === 'undefined' || !Intl.Segmenter) return;
+
+  const isPunctuation = (ch: string) => /^\p{P}|\p{S}$/u.test(ch);
+
+  const snapStartToWordBoundary = () => {
+    const node = range.startContainer;
+    if (node.nodeType !== Node.TEXT_NODE) return;
+    const text = node.textContent ?? '';
+    const offset = range.startOffset;
+    if (offset === 0 || offset >= text.length) return;
+
+    const charAtOffset = text[offset] ?? '';
+    if (isPunctuation(charAtOffset)) return;
+
+    const segmenter = new Intl.Segmenter(undefined, { granularity: 'word' });
+    for (const seg of segmenter.segment(text)) {
+      if (seg.isWordLike && seg.index < offset && seg.index + seg.segment.length > offset) {
+        range.setStart(node, seg.index);
+        break;
+      }
+    }
+  };
+
+  const snapEndToWordBoundary = () => {
+    const node = range.endContainer;
+    if (node.nodeType !== Node.TEXT_NODE) return;
+    const text = node.textContent ?? '';
+    const offset = range.endOffset;
+    if (offset === 0 || offset >= text.length) return;
+
+    const charBeforeOffset = text[offset - 1] ?? '';
+    if (isPunctuation(charBeforeOffset)) return;
+
+    const segmenter = new Intl.Segmenter(undefined, { granularity: 'word' });
+    for (const seg of segmenter.segment(text)) {
+      if (seg.isWordLike && seg.index < offset && seg.index + seg.segment.length > offset) {
+        range.setEnd(node, seg.index + seg.segment.length);
+        break;
+      }
+    }
+  };
+
+  snapStartToWordBoundary();
+  snapEndToWordBoundary();
+};
+
 export const getTextFromRange = (range: Range, rejectTags: string[] = []): string => {
   const clonedRange = range.cloneRange();
   const fragment = clonedRange.cloneContents();
-  const walker = document.createTreeWalker(fragment, NodeFilter.SHOW_TEXT, {
-    acceptNode: (node) => {
-      const parent = node.parentElement;
-      if (rejectTags.includes(parent?.tagName.toLowerCase() || '')) {
-        return NodeFilter.FILTER_REJECT;
-      }
-      return NodeFilter.FILTER_ACCEPT;
+  const walker = document.createTreeWalker(
+    fragment,
+    NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT,
+    {
+      acceptNode: (node) => {
+        const parent = node.parentElement;
+        if (rejectTags.includes(parent?.tagName.toLowerCase() || '')) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      },
     },
-  });
+  );
 
+  // pdf.js inserts <br role="presentation"> between text spans at line endings
+  // (see TextLayer#appendText in pdfjs). Without this, multi-line PDF
+  // selections collapse adjacent line-final and line-initial words into a
+  // single token (e.g. "lastfirst"). Treat <br> as a newline, matching how
+  // Selection.toString() handles line breaks in the browser.
   let text = '';
-  let node: Text | null;
-
-  while ((node = walker.nextNode() as Text | null)) {
-    text += node.nodeValue ?? '';
+  let node: Node | null;
+  while ((node = walker.nextNode())) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      text += (node as Text).nodeValue ?? '';
+    } else if ((node as Element).tagName === 'BR') {
+      text += '\n';
+    }
   }
 
   return text;

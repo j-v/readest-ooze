@@ -6,6 +6,16 @@
   "permissions": [
     "core:default",
     "fs:default",
+    "fs:read-meta",
+    "fs:allow-open",
+    "fs:allow-write",
+    "fs:allow-read",
+    "fs:allow-rename",
+    "fs:allow-mkdir",
+    "fs:allow-remove",
+    "fs:allow-stat",
+    "fs:allow-fstat",
+    "fs:allow-lstat",
     {
       "identifier": "fs:scope-appconfig-recursive",
       "allow": [
@@ -71,7 +81,13 @@
           "path": "**/Readest/**/*"
         },
         {
+          "path": "**/com.github.johnfactotum.Foliate/**/*"
+        },
+        {
           "path": "**/last-book-cover.png"
+        },
+        {
+          "path": "$TEMP/**/*"
         }
       ]
     },
@@ -122,7 +138,9 @@
     "core:window:default",
     "core:window:allow-close",
     "core:window:allow-center",
+    "core:window:allow-show",
     "core:window:allow-minimize",
+    "core:window:allow-unminimize",
     "core:window:allow-maximize",
     "core:window:allow-unmaximize",
     "core:window:allow-set-size",
@@ -152,12 +170,34 @@
         }
       ]
     },
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "start-readest",
+          "cmd": "cmd",
+          "args": ["/C", "start", "", { "validator": "^.*Readest(.*)\\.exe$" }]
+        },
+        {
+          "name": "chmod-appimage",
+          "cmd": "chmod",
+          "args": ["+x", { "validator": "^.*Readest(.*)\\.AppImage$" }]
+        },
+        {
+          "name": "launch-appimage",
+          "cmd": "setsid",
+          "args": [{ "validator": "^.*Readest(.*)\\.AppImage$" }]
+        }
+      ]
+    },
     "haptics:allow-vibrate",
     "haptics:allow-impact-feedback",
     "haptics:allow-notification-feedback",
     "haptics:allow-selection-feedback",
     "deep-link:default",
     "sharekit:default",
+    "device-info:default",
+    "turso:default",
     "native-tts:default",
     "native-bridge:default"
   ]

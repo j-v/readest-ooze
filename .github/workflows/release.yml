@@ -24,7 +24,7 @@ jobs:
         run: echo "PACKAGE_VERSION=$(node -p "require('./apps/readest-app/package.json').version")" >> $GITHUB_ENV
       - name: get release
         id: get-release
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const { data } = await github.rest.repos.getLatestRelease({
@@ -35,7 +35,7 @@ jobs:
             core.setOutput('release_tag', data.tag_name);
       - name: get release notes
         id: get-release-notes
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
@@ -57,7 +57,7 @@ jobs:
     steps:
       - name: update release
         id: update-release
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           release_id: ${{ needs.get-release.outputs.release_id }}
           release_tag: ${{ needs.get-release.outputs.release_tag }}
@@ -98,8 +98,19 @@ jobs:
           meta_file="apps/readest.koplugin/_meta.lua"
           perl -i -pe "s/^}/    version = \"${version}\",\n}/" "${meta_file}"
 
+          # Exclude dev-only artifacts from the published plugin zip:
+          #   scripts/  — i18n + build helpers
+          #   docs/     — design notes
+          #   spec/     — busted test suite
+          #   .busted   — busted runner config
+          # Mirror these in apps/readest.koplugin/scripts/build-koplugin.mjs
+          # for local builds.
           cd apps
-          zip -r ../${plugin_zip} readest.koplugin
+          zip -r ../${plugin_zip} readest.koplugin \
+            -x 'readest.koplugin/scripts/*' \
+               'readest.koplugin/docs/*' \
+               'readest.koplugin/spec/*' \
+               'readest.koplugin/.busted'
           cd ..
 
           echo "Uploading ${plugin_zip} to GitHub release"
@@ -124,11 +135,6 @@ jobs:
             release: linux
             arch: aarch64
             rust_target: aarch64-unknown-linux-gnu
-          - os: ubuntu-22.04-arm
-            release: linux
-            arch: armhf
-            rust_target: arm-unknown-linux-gnueabihf
-            args: '--target arm-unknown-linux-gnueabihf --bundles deb'
           - os: macos-latest
             release: macos
             arch: aarch64
@@ -154,14 +160,12 @@ jobs:
         run: git submodule update --init --recursive
 
       - name: setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.14.0
+        uses: pnpm/action-setup@v6
 
       - name: setup node
         uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
 
       - name: setup Java (for Android build only)
@@ -173,7 +177,7 @@ jobs:
 
       - name: setup Android SDK (for Android build only)
         if: matrix.config.release == 'android'
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: install NDK (for Android build only)
         if: matrix.config.release == 'android'
@@ -198,7 +202,7 @@ jobs:
         if: contains(matrix.config.os, 'ubuntu') && matrix.config.release != 'android' && matrix.config.arch != 'armhf'
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libfontconfig-dev libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+          sudo apt-get install -y pkg-config libfontconfig-dev libgtk-3-dev libwebkit2gtk-4.1 libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1 libjavascriptcoregtk-4.1-dev gir1.2-javascriptcoregtk-4.1 gir1.2-webkit2-4.1 libappindicator3-dev librsvg2-dev patchelf xdg-utils
 
       - name: install dependencies (ubuntu only - armhf specific)
         if: contains(matrix.config.os, 'ubuntu') && matrix.config.arch == 'armhf'
@@ -210,6 +214,7 @@ jobs:
           echo 'PKG_CONFIG_PATH=/usr/lib/arm-linux-gnueabihf/pkgconfig:/usr/share/pkgconfig' >> $GITHUB_ENV
           echo 'PKG_CONFIG_SYSROOT_DIR=/usr/arm-linux-gnueabihf' >> $GITHUB_ENV
           echo 'CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_LINKER=arm-linux-gnueabihf-gcc' >> $GITHUB_ENV
+          echo 'CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_RUSTFLAGS=--cfg=io_uring_skip_arch_check' >> $GITHUB_ENV
 
       - name: create .env.local file for Next.js
         run: |
@@ -286,10 +291,15 @@ jobs:
           echo "Uploading updated latest.json to GitHub release"
           gh release upload ${{ needs.get-release.outputs.release_tag }} latest.json --clobber
 
+      - name: Override tauri-cli with custom AppImage format (Linux)
+        if: matrix.config.release == 'linux'
+        run: cargo install tauri-cli --git https://github.com/tauri-apps/tauri --branch feat/truly-portable-appimage --force
+
       - uses: tauri-apps/tauri-action@v0
         if: matrix.config.release != 'android'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_BUNDLER_NEW_APPIMAGE_FORMAT: 'true'
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -316,6 +326,8 @@ jobs:
         if: matrix.config.os == 'windows-latest'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         shell: bash
@@ -348,8 +360,51 @@ jobs:
           echo "Uploading $bin_file to GitHub release"
           gh release upload ${{ needs.get-release.outputs.release_tag }} $bin_file --clobber
 
+          echo "Signing portable binary"
+          pushd apps/readest-app/
+          pnpm tauri signer sign "../../$bin_file"
+          popd
+          echo "Uploading signature to GitHub release"
+          gh release upload ${{ needs.get-release.outputs.release_tag }} $bin_file.sig --clobber
+
+      - name: download and update latest.json for Windows portable release
+        if: matrix.config.os == 'windows-latest'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          curl -sL https://github.com/readest/readest/releases/latest/download/latest.json -o latest.json
+
+          version=${{ needs.get-release.outputs.release_version }}
+          arch=${{ matrix.config.arch }}
+
+          if [ "$arch" = "x86_64" ]; then
+            bin_file="Readest_${version}_x64-portable.exe"
+            platform_key="windows-x86_64-portable"
+          elif [ "$arch" = "aarch64" ]; then
+            bin_file="Readest_${version}_arm64-portable.exe"
+            platform_key="windows-aarch64-portable"
+          else
+            echo "Unknown architecture: $arch"
+            exit 1
+          fi
+
+          portable_url="https://github.com/readest/readest/releases/download/${{ needs.get-release.outputs.release_tag }}/$bin_file"
+          portable_sig=$(cat $bin_file.sig)
+
+          jq --arg url "$portable_url" \
+              --arg sig "$portable_sig" \
+              --arg key "$platform_key" \
+              '.platforms[$key] = {signature: $sig, url: $url}' latest.json > tmp.$$.json && mv tmp.$$.json latest.json
+
+          echo "Uploading updated latest.json to GitHub release"
+          gh release upload ${{ needs.get-release.outputs.release_tag }} latest.json --clobber
+
   upload-to-r2:
     needs: [get-release, build-tauri]
+    permissions:
+      contents: read
+      actions: write
     uses: ./.github/workflows/upload-to-r2.yml
     with:
       tag: ${{ needs.get-release.outputs.release_tag }}

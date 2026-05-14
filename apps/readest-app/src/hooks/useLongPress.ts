@@ -34,11 +34,12 @@ export const useLongPress = (
   deps: React.DependencyList,
 ): UseLongPressResult => {
   const [pressing, setPressing] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = useRef<ReturnType<typeof setTimeout>>(null);
+  const pressDelayRef = useRef<ReturnType<typeof setTimeout>>(null);
   const startPosRef = useRef<{ x: number; y: number } | null>(null);
   const pointerId = useRef<number | null>(null);
   const hasPointerEventsRef = useRef(false);
-  const pointerEventTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
+  const pointerEventTimeoutRef = useRef<ReturnType<typeof setTimeout>>(null);
   const isLongPressTriggered = useRef(false);
   const pointerEventRef = useRef<React.PointerEvent | null>(null);
 
@@ -47,7 +48,13 @@ export const useLongPress = (
     isLongPressTriggered.current = false;
     startPosRef.current = null;
     pointerId.current = null;
-    clearTimeout(timerRef.current);
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+    }
+    if (pressDelayRef.current) {
+      clearTimeout(pressDelayRef.current);
+      pressDelayRef.current = null;
+    }
   }, []);
 
   const handlePointerDown = useCallback(
@@ -57,13 +64,17 @@ export const useLongPress = (
       }
 
       hasPointerEventsRef.current = true;
-      clearTimeout(pointerEventTimeoutRef.current);
+      if (pointerEventTimeoutRef.current) {
+        clearTimeout(pointerEventTimeoutRef.current);
+      }
 
       pointerId.current = e.pointerId;
       startPosRef.current = { x: e.clientX, y: e.clientY };
       isLongPressTriggered.current = false;
-      pointerEventRef.current = e;
-      setPressing(true);
+
+      pressDelayRef.current = setTimeout(() => {
+        setPressing(true);
+      }, 100);
 
       timerRef.current = setTimeout(() => {
         if (startPosRef.current) {
@@ -141,7 +152,9 @@ export const useLongPress = (
       if (onContextMenu) {
         e.preventDefault();
         e.stopPropagation();
-        onContextMenu(e);
+        setTimeout(() => {
+          onContextMenu();
+        }, 100);
       }
       reset();
     },
@@ -150,7 +163,9 @@ export const useLongPress = (
 
   useEffect(() => {
     return () => {
-      clearTimeout(timerRef.current);
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);

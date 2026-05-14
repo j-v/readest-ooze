@@ -10,6 +10,7 @@ export interface DBBook {
   group_name?: string;
   tags?: string[];
   progress?: [number, number];
+  reading_status?: string;
 
   metadata?: string | null;
   created_at?: string;
@@ -25,6 +26,7 @@ export interface DBBookConfig {
   location?: string;
   xpointer?: string;
   progress?: string;
+  rsvp_position?: string;
   search_config?: string;
   view_settings?: string;
 
@@ -39,7 +41,10 @@ export interface DBBookNote {
   meta_hash?: string;
   id: string;
   type: string;
-  cfi: string;
+  cfi?: string;
+  xpointer0?: string;
+  xpointer1?: string;
+  page?: number;
   text?: string;
   style?: string;
   color?: string;

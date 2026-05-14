@@ -6,6 +6,64 @@ import { LocaleWithTextInfo } from './misc';
 
 export const NOTE_PREFIX = 'foliate-note:';
 
+type RangeAnchor = (doc: Document) => Range;
+
+export interface Renderer extends HTMLElement {
+  scrolled?: boolean;
+  scrollLocked: boolean;
+  size: number; // current page height
+  viewSize: number; // whole document view height
+  start: number;
+  end: number;
+  page: number; // section page index (0-based)
+  pages: number; // section page count
+  atStart: boolean;
+  atEnd: boolean;
+  containerPosition: number;
+  sideProp: 'width' | 'height';
+  pageColors?: {
+    background: string;
+    foreground: string;
+  };
+  columnCount?: number;
+  open: (book: BookDoc) => Promise<void>;
+  setAttribute: (name: string, value: string | number) => void;
+  removeAttribute: (name: string) => void;
+  next: () => Promise<void>;
+  prev: () => Promise<void>;
+  nextSection?: () => Promise<void>;
+  prevSection?: () => Promise<void>;
+  render?: () => Promise<void>;
+  goTo: (params: { index: number; anchor?: number | RangeAnchor }) => Promise<void>;
+  setStyles?: (css: string) => void;
+  primaryIndex: number;
+  getContents: () => { doc: Document; index?: number; overlayer?: unknown }[];
+  scrollToAnchor?: (anchor: number | Range, reason?: string, smooth?: boolean) => void;
+  addEventListener: (
+    type: string,
+    listener: EventListener,
+    option?: AddEventListenerOptions,
+  ) => void;
+  removeEventListener: (type: string, listener: EventListener) => void;
+  showLoupe?: (
+    x: number,
+    y: number,
+    options: {
+      isVertical: boolean;
+      color: string;
+      gap: number;
+      margin: number;
+      radius: number;
+      magnification: number;
+    },
+  ) => void;
+  hideLoupe?: () => void;
+  destroyLoupe?: () => void;
+  pinchZoom?: (ratio: number) => void;
+  pinchEnd?: () => void;
+  destroy: () => void;
+}
+
 export interface FoliateView extends HTMLElement {
   open: (book: BookDoc) => Promise<void>;
   close: () => void;
@@ -14,10 +72,20 @@ export interface FoliateView extends HTMLElement {
   goToFraction: (fraction: number) => void;
   prev: (distance?: number) => void;
   next: (distance?: number) => void;
+  pan: (dx: number, dy: number) => void;
+  isOverflowX: () => boolean;
+  isOverflowY: () => boolean;
   goLeft: () => void;
   goRight: () => void;
   getCFI: (index: number, range: Range) => string;
-  resolveCFI: (cfi: string) => { index: number; anchor: (doc: Document) => Range };
+  getCFIProgress: (cfi: string) => Promise<{
+    fraction: number;
+    section: { current: number; total: number };
+    location: { current: number; next: number; total: number };
+    time: { section: number; total: number };
+  } | null>;
+  resolveCFI: (cfi: string) => { index: number; anchor: RangeAnchor };
+  resolveNavigation: (cfiOrHrefOrIndex: string | number) => { index: number; anchor?: RangeAnchor };
   addAnnotation: (
     note: BookNote & { value?: string },
     remove?: boolean,
@@ -33,6 +101,7 @@ export interface FoliateView extends HTMLElement {
   ) => Promise<void>;
   book: BookDoc;
   tts: TTS | null;
+  isFixedLayout: boolean;
   language: {
     locale?: LocaleWithTextInfo;
     isCJK?: boolean;
@@ -46,34 +115,7 @@ export interface FoliateView extends HTMLElement {
     forward: () => void;
     clear: () => void;
   };
-  renderer: {
-    scrolled?: boolean;
-    scrollLocked: boolean;
-    size: number; // current page height
-    viewSize: number; // whole document view height
-    start: number;
-    end: number;
-    page: number;
-    pages: number;
-    containerPosition: number;
-    sideProp: 'width' | 'height';
-    setAttribute: (name: string, value: string | number) => void;
-    removeAttribute: (name: string) => void;
-    next: () => Promise<void>;
-    prev: () => Promise<void>;
-    nextSection?: () => Promise<void>;
-    prevSection?: () => Promise<void>;
-    goTo?: (params: { index: number; anchor: number }) => void;
-    setStyles?: (css: string) => void;
-    getContents: () => { doc: Document; index?: number; overlayer?: unknown }[];
-    scrollToAnchor: (anchor: number | Range) => void;
-    addEventListener: (
-      type: string,
-      listener: EventListener,
-      option?: AddEventListenerOptions,
-    ) => void;
-    removeEventListener: (type: string, listener: EventListener) => void;
-  };
+  renderer: Renderer;
 }
 
 export const wrappedFoliateView = (originalView: FoliateView): FoliateView => {

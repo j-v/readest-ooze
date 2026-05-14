@@ -12,6 +12,7 @@ import { HttpTTSClient } from './HttpTTSClient';
 import { TTSUtils } from './TTSUtils';
 import { TTSClient } from './TTSClient';
 import { useSettingsStore } from '@/store/settingsStore';
+import { isValidLang } from '@/utils/lang';
 
 type TTSState =
   | 'stopped'
@@ -30,9 +31,12 @@ export class TTSController extends EventTarget {
   view: FoliateView;
   isAuthenticated: boolean = false;
   preprocessCallback?: (ssml: string) => Promise<string>;
+  onSectionChange?: (sectionIndex: number) => Promise<void>;
   #nossmlCnt: number = 0;
   #currentSpeakAbortController: AbortController | null = null;
   #currentSpeakPromise: Promise<void> | null = null;
+
+  #ttsSectionIndex: number = -1;
 
   state: TTSState = 'stopped';
   ttsLang: string = '';
@@ -61,26 +65,30 @@ export class TTSController extends EventTarget {
     view: FoliateView,
     isAuthenticated: boolean = false,
     preprocessCallback?: (ssml: string) => Promise<string>,
+    onSectionChange?: (sectionIndex: number) => Promise<void>,
   ) {
     super();
     this.ttsWebClient = new WebSpeechClient(this);
-    this.ttsEdgeClient = new EdgeTTSClient(this);
+    this.ttsEdgeClient = new EdgeTTSClient(this, appService);
     this.ttsOfflineClient = new OfflineTTSClient(this);
     // TODO: implement native TTS client for iOS and PC
     if (appService?.isAndroidApp) {
       this.ttsNativeClient = new NativeTTSClient(this);
     }
-    // Initialize HTTP TTS client if feature flag is enabled
     // Initialize HTTP TTS client if enabled in settings
     const settings = useSettingsStore.getState().settings;
-    if (settings.customTTSEndpoint.enabled) {
-      this.ttsHttpClient = new HttpTTSClient(this, settings.customTTSEndpoint.endpoint);
+    if (settings.customTTSEndpoint?.enabled) {
+      this.ttsHttpClient = new HttpTTSClient(
+        this,
+        settings.customTTSEndpoint?.endpoint ?? 'http://localhost:8000/tts',
+      );
     }
     this.ttsClient = this.ttsWebClient;
     this.appService = appService;
     this.view = view;
     this.isAuthenticated = isAuthenticated;
     this.preprocessCallback = preprocessCallback;
+    this.onSectionChange = onSectionChange;
   }
 
   async init(bookHash?: string, sectionHref?: string, voiceId?: string, lang?: string) {
@@ -149,17 +157,41 @@ export class TTSController extends EventTarget {
     this.ttsEdgeVoices = await this.ttsEdgeClient.getAllVoices();
   }
 
+  #getPrimaryContent() {
+    const contents = this.view.renderer.getContents();
+    const primaryIndex = this.view.renderer.primaryIndex;
+    return (contents.find((x) => x.index === primaryIndex) ?? contents[0]) as
+      | {
+          doc: Document;
+          index?: number;
+          overlayer?: Overlayer;
+        }
+      | undefined;
+  }
+
   #getHighlighter() {
     return (range: Range) => {
-      const { overlayer } = this.view.renderer.getContents()[0] as { overlayer: Overlayer };
-      const { style, color } = this.options;
-      overlayer?.remove(HIGHLIGHT_KEY);
-      overlayer?.add(HIGHLIGHT_KEY, range, Overlayer[style], { color });
+      const content = this.#getPrimaryContent();
+      if (!content) return;
+      const { doc, index, overlayer } = content;
+      if (!doc || index === undefined || index !== this.#ttsSectionIndex) {
+        return;
+      }
+      try {
+        const cfi = this.view.getCFI(index, range);
+        const visibleRange = this.view.resolveCFI(cfi).anchor(doc);
+        const { style, color } = this.options;
+        overlayer?.remove(HIGHLIGHT_KEY);
+        overlayer?.add(HIGHLIGHT_KEY, visibleRange, Overlayer[style], { color });
+      } catch (e) {
+        console.error('Failed to highlight range', e);
+      }
     };
   }
 
   #clearHighlighter() {
-    const { overlayer } = (this.view.renderer.getContents()?.[0] || {}) as { overlayer: Overlayer };
+    const content = this.#getPrimaryContent();
+    const overlayer = content?.overlayer as Overlayer | undefined;
     overlayer?.remove(HIGHLIGHT_KEY);
   }
 
@@ -184,8 +216,6 @@ export class TTSController extends EventTarget {
     const hasAudio = await (this.ttsOfflineClient as OfflineTTSClient).hasOfflineAudio();
 
     if (hasAudio) {
-      // Store the current online client before switching -- TODO use this for restoring in disableOfflineAudio?
-      // const currentClient = this.ttsClient;
       this.ttsClient = this.ttsOfflineClient;
       await this.ttsClient.setRate(this.ttsRate);
       this.dispatchClientChange();
@@ -203,12 +233,10 @@ export class TTSController extends EventTarget {
    * Returns true if offline audio is available for the new section.
    */
   async updateOfflineContextIfNeeded(): Promise<boolean> {
-    // Only relevant when using offline TTS
     if (this.ttsClient.name !== 'offline-tts' || !this.ttsOfflineClient.setContext) {
-      return true; // Not using offline, no update needed
+      return true;
     }
 
-    // Get current section from the view's TTS state
     let currentHref = '';
     const contents = this.view.renderer.getContents();
     const contentIndex = contents[0]?.index;
@@ -217,16 +245,13 @@ export class TTSController extends EventTarget {
     }
 
     if (!currentHref || currentHref === this.#lastSectionHref) {
-      return true; // No change
+      return true;
     }
 
     this.#lastSectionHref = currentHref;
 
-    // Update offline client context for the new section
     this.ttsOfflineClient.setContext(this.#bookHash, currentHref, this.#voiceId, this.ttsLang);
 
-    // Check if offline audio is available for the new section
-    // It may have a different voice or no audio at all
     const hasAudio = await (this.ttsOfflineClient as OfflineTTSClient).hasOfflineAudio();
 
     if (!hasAudio) {
@@ -243,7 +268,6 @@ export class TTSController extends EventTarget {
    */
   async disableOfflineAudio(): Promise<void> {
     if (this.ttsClient.name === 'offline-tts') {
-      // Revert to the preferred client based on saved preferences
       const preferredClientName = TTSUtils.getPreferredClient();
       if (preferredClientName === 'native-tts' && this.ttsNativeClient?.initialized) {
         this.ttsClient = this.ttsNativeClient;
@@ -260,24 +284,121 @@ export class TTSController extends EventTarget {
     }
   }
 
-  async initViewTTS(options?: TTSHighlightOptions) {
-    if (options) {
-      this.options.style = options.style;
-      this.options.color = options.color;
+  updateHighlightOptions(options: TTSHighlightOptions) {
+    this.options.style = options.style;
+    this.options.color = options.color;
+  }
+
+  async initViewTTS(index?: number) {
+    if (this.#ttsSectionIndex === -1) {
+      const fromSectionIndex = (index || this.#getPrimaryContent()?.index) ?? 0;
+      await this.#initTTSForSection(fromSectionIndex);
     }
+  }
+
+  async #initTTSForSection(sectionIndex: number): Promise<boolean> {
+    const sections = this.view.book.sections;
+    if (!sections || sectionIndex < 0 || sectionIndex >= sections.length) {
+      return false;
+    }
+
+    const section = sections[sectionIndex];
+    if (!section?.createDocument) {
+      return false;
+    }
+
+    this.#ttsSectionIndex = sectionIndex;
+
+    const currentSection = this.#getPrimaryContent();
+    if (currentSection?.index !== sectionIndex) {
+      await this.onSectionChange?.(sectionIndex);
+    }
+
+    let doc: Document;
+    if (currentSection?.index === sectionIndex && currentSection?.doc) {
+      doc = currentSection.doc;
+    } else {
+      doc = await section.createDocument();
+      const html = doc.querySelector('html');
+      const lang = html?.getAttribute('lang') || html?.getAttribute('xml:lang') || '';
+      if (html && !isValidLang(lang) && this.ttsLang) {
+        html.setAttribute('lang', this.ttsLang);
+        html.setAttribute('xml:lang', this.ttsLang);
+      }
+    }
+
+    if (this.view.tts && this.view.tts.doc === doc) {
+      return true;
+    }
+
+    const { TTS } = await import('foliate-js/tts.js');
+    const { textWalker } = await import('foliate-js/text-walker.js');
     let granularity: TTSGranularity = this.view.language.isCJK ? 'sentence' : 'word';
     const supportedGranularities = this.ttsClient.getGranularities();
     if (!supportedGranularities.includes(granularity)) {
       granularity = supportedGranularities[0]!;
     }
-    await this.view.initTTS(
-      granularity,
+
+    this.view.tts = new TTS(
+      doc,
+      textWalker,
       createRejectFilter({
-        tags: ['rt'],
+        tags: ['rt', 'canvas', 'br'],
+        classes: ['annotationLayer'],
         contents: [{ tag: 'a', content: /^[\[\(]?[\*\d]+[\)\]]?$/ }],
       }),
       this.#getHighlighter(),
+      granularity,
     );
+    console.log(`[TTS] Initialized TTS for section ${sectionIndex}`);
+
+    return true;
+  }
+
+  async #initTTSForNextSection(): Promise<boolean> {
+    const nextIndex = this.#ttsSectionIndex + 1;
+    const sections = this.view.book.sections;
+
+    if (!sections || nextIndex >= sections.length) {
+      return false;
+    }
+
+    return await this.#initTTSForSection(nextIndex);
+  }
+
+  async #initTTSForPrevSection(): Promise<boolean> {
+    const prevIndex = this.#ttsSectionIndex - 1;
+
+    if (prevIndex < 0) {
+      return false;
+    }
+
+    return await this.#initTTSForSection(prevIndex);
+  }
+
+  async #handleNavigationWithSSML(ssml: string | undefined, isPlaying: boolean) {
+    if (isPlaying) {
+      this.#speak(ssml);
+    } else {
+      if (ssml) {
+        const { marks } = parseSSMLMarks(ssml);
+        if (marks.length > 0) {
+          this.dispatchSpeakMark(marks[0]);
+        }
+      }
+    }
+  }
+
+  async #handleNavigationWithoutSSML(initSection: () => Promise<boolean>, isPlaying: boolean) {
+    if (await initSection()) {
+      if (isPlaying) {
+        this.#speak(this.view.tts?.start());
+      } else {
+        this.view.tts?.start();
+      }
+    } else {
+      await this.stop();
+    }
   }
 
   async preloadSSML(ssml: string | undefined, signal: AbortSignal) {
@@ -293,15 +414,29 @@ export class TTSController extends EventTarget {
 
     const tts = this.view.tts;
     if (!tts) return;
-    let preloaded = 0;
+
+    // Gather all next SSMLs and rewind synchronously to avoid a race condition:
+    // tts.next() replaces TTS.#ranges (used by setMark() during playback).
+    // If async gaps exist between next()/prev() calls, a concurrent #speak()
+    // can dispatch marks against the wrong #ranges, causing incorrect highlights
+    // and accidental page turns.
+    const rawSsmls: string[] = [];
     for (let i = 0; i < count; i++) {
-      const ssml = await this.#preprocessSSML(tts.next());
-      this.preloadSSML(ssml, new AbortController().signal);
-      if (ssml) preloaded++;
+      const ssml = tts.next();
+      if (!ssml) break;
+      rawSsmls.push(ssml);
     }
-    for (let i = 0; i < preloaded; i++) {
+    for (let i = 0; i < rawSsmls.length; i++) {
       tts.prev();
     }
+
+    const ssmls: string[] = [];
+    for (const raw of rawSsmls) {
+      const ssml = await this.#preprocessSSML(raw);
+      if (!ssml) break;
+      ssmls.push(ssml);
+    }
+    await Promise.all(ssmls.map((ssml) => this.preloadSSML(ssml, new AbortController().signal)));
   }
 
   async #preprocessSSML(ssml?: string) {
@@ -342,7 +477,7 @@ export class TTSController extends EventTarget {
 
     this.#currentSpeakPromise = new Promise(async (resolve, reject) => {
       try {
-        console.log('TTS speak');
+        console.log('[TTS] speak');
         this.state = 'playing';
 
         signal.addEventListener('abort', () => {
@@ -355,23 +490,28 @@ export class TTSController extends EventTarget {
           // FIXME: in case we are at the end of the book, need a better way to handle this
           if (this.#nossmlCnt < 10 && this.state === 'playing' && !oneTime) {
             resolve();
-            await this.view.next();
-            await this.forward();
+            if (await this.#initTTSForNextSection()) {
+              await this.forward();
+            } else {
+              await this.stop();
+            }
           }
-          console.log('no SSML, skipping for', this.#nossmlCnt);
+          console.log('[TTS] no SSML, skipping for', this.#nossmlCnt);
           return;
         } else {
           this.#nossmlCnt = 0;
         }
 
         const { plainText, marks } = parseSSMLMarks(ssml);
-        if ((!plainText || marks.length === 0) && !oneTime) {
-          resolve();
-          return await this.forward();
-        } else {
-          this.dispatchSpeakMark(marks[0]);
+        if (!oneTime) {
+          if (!plainText || marks.length === 0) {
+            resolve();
+            return await this.forward();
+          } else {
+            this.dispatchSpeakMark(marks[0]);
+          }
+          await this.preloadSSML(ssml, signal);
         }
-        await this.preloadSSML(ssml, signal);
         const iter = await this.ttsClient.speak(ssml, signal);
         let lastCode;
         for await (const { code } of iter) {
@@ -430,11 +570,19 @@ export class TTSController extends EventTarget {
     await this.#currentSpeakPromise.catch((e) => this.error(e));
   }
 
-  async speak(ssml: string | Promise<string>, oneTime = false) {
+  async speak(ssml: string | Promise<string>, oneTime = false, oneTimeCallback?: () => void) {
     await this.initViewTTS();
-    this.#speak(ssml, oneTime).catch((e) => this.error(e));
-    this.preloadNextSSML();
-    this.dispatchSpeakMark();
+    this.#speak(ssml, oneTime)
+      .then(() => {
+        if (oneTime && oneTimeCallback) {
+          oneTimeCallback();
+        }
+      })
+      .catch((e) => this.error(e));
+    if (!oneTime) {
+      this.preloadNextSSML();
+      this.dispatchSpeakMark();
+    }
   }
 
   play() {
@@ -447,7 +595,12 @@ export class TTSController extends EventTarget {
 
   async start() {
     await this.initViewTTS();
-    const ssml = this.state.includes('paused') ? this.view.tts?.resume() : this.view.tts?.start();
+    // Always resume from the current list position instead of calling tts.start().
+    // tts.start() resets the TTS list to position 0 (section beginning), which is
+    // wrong when state transiently becomes 'stopped' during forward()/backward()
+    // — a fast play tap in that window would otherwise jump back to section start.
+    // tts.resume() falls back to tts.next() on a fresh TTS, so it's safe at init.
+    const ssml = this.view.tts?.resume();
     if (this.state.includes('paused')) {
       this.resume();
     }
@@ -489,34 +642,32 @@ export class TTSController extends EventTarget {
   // goto previous mark/paragraph
   async backward(byMark = false) {
     await this.initViewTTS();
-    if (this.state === 'playing') {
-      await this.stop();
-      if (byMark) this.#speak(this.view.tts?.prevMark());
-      else this.#speak(this.view.tts?.prev());
+    const isPlaying = this.state === 'playing';
+    await this.stop();
+    if (!isPlaying) this.state = 'backward-paused';
+
+    const ssml = byMark ? this.view.tts?.prevMark(!isPlaying) : this.view.tts?.prev(!isPlaying);
+    if (!ssml) {
+      await this.#handleNavigationWithoutSSML(() => this.#initTTSForPrevSection(), isPlaying);
     } else {
-      await this.stop();
-      this.state = 'backward-paused';
-      if (byMark) this.view.tts?.prevMark(true);
-      else this.view.tts?.prev(true);
+      await this.#handleNavigationWithSSML(ssml, isPlaying);
     }
   }
 
   // goto next mark/paragraph
   async forward(byMark = false) {
     await this.initViewTTS();
-    if (this.state === 'playing') {
-      await this.stop();
-      if (byMark) this.#speak(this.view.tts?.nextMark());
-      else {
-        this.#speak(this.view.tts?.next());
-        this.preloadNextSSML();
-      }
+    const isPlaying = this.state === 'playing';
+    await this.stop();
+    if (!isPlaying) this.state = 'forward-paused';
+
+    const ssml = byMark ? this.view.tts?.nextMark(!isPlaying) : this.view.tts?.next(!isPlaying);
+    if (!ssml) {
+      await this.#handleNavigationWithoutSSML(() => this.#initTTSForNextSection(), isPlaying);
     } else {
-      await this.stop();
-      this.state = 'forward-paused';
-      if (byMark) this.view.tts?.nextMark(true);
-      else this.view.tts?.next(true);
+      await this.#handleNavigationWithSSML(ssml, isPlaying);
     }
+    if (isPlaying && !byMark) this.preloadNextSSML();
   }
 
   async setLang(lang: string) {
@@ -597,9 +748,12 @@ export class TTSController extends EventTarget {
 
   dispatchSpeakMark(mark?: TTSMark) {
     this.dispatchEvent(new CustomEvent('tts-speak-mark', { detail: mark || { text: '' } }));
-    if (mark) {
-      const range = this.view.tts?.setMark(mark.name);
-      this.dispatchEvent(new CustomEvent('tts-highlight-mark', { detail: range }));
+    if (mark && mark.name !== '-1') {
+      try {
+        const range = this.view.tts?.setMark(mark.name);
+        const cfi = this.view.getCFI(this.#ttsSectionIndex, range);
+        this.dispatchEvent(new CustomEvent('tts-highlight-mark', { detail: { cfi } }));
+      } catch {}
     }
   }
 
@@ -615,6 +769,16 @@ export class TTSController extends EventTarget {
   }
 
   error(e: unknown) {
+    // AbortError is expected during normal stop/restart cycles (rate change,
+    // forward/backward, voice change) — on iOS especially, the in-flight
+    // audio.play() promise rejects with AbortError after audio.src is reset,
+    // and that rejection can leak through one of the .catch chains. Letting it
+    // flip state to 'stopped' desyncs the state machine: handleSetRate's
+    // `state === 'playing'` check then falls through to a no-op, and #speak's
+    // auto-forward gate skips advancing to the next paragraph.
+    if (e instanceof Error && (e.name === 'AbortError' || e.message === 'Aborted')) {
+      return;
+    }
     console.error(e);
     this.state = 'stopped';
   }
@@ -625,6 +789,8 @@ export class TTSController extends EventTarget {
     if (this.ttsOfflineClient.initialized) {
       await this.ttsOfflineClient.shutdown();
     }
+    this.#ttsSectionIndex = -1;
+    this.view.tts = null;
     if (this.ttsWebClient.initialized) {
       await this.ttsWebClient.shutdown();
     }

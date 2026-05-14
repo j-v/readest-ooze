@@ -1,5 +1,6 @@
 import { BookFormat } from '@/types/book';
-import { Contributor, Identifier, LanguageMap } from '@/utils/book';
+import { Collection, Contributor, Identifier, LanguageMap } from '@/utils/book';
+import { configureZip } from '@/utils/zip';
 import * as epubcfi from 'foliate-js/epubcfi.js';
 
 export const CFI = epubcfi;
@@ -16,9 +17,20 @@ export interface TOCItem {
   id: number;
   label: string;
   href: string;
+  index: number; // Page index for PDF books
   cfi?: string;
   location?: Location;
   subitems?: TOCItem[];
+}
+
+export interface SectionFragment {
+  id: string;
+  href: string;
+  cfi: string;
+  size: number;
+  linear: string;
+  location?: Location;
+  fragments?: Array<SectionFragment>;
 }
 
 export interface SectionItem {
@@ -26,9 +38,12 @@ export interface SectionItem {
   cfi: string;
   size: number;
   linear: string;
+  href?: string;
   location?: Location;
   pageSpread?: 'left' | 'right' | 'center' | '';
+  fragments?: Array<SectionFragment>;
 
+  loadText?: () => Promise<string | null>;
   createDocument: () => Promise<Document>;
 }
 
@@ -43,7 +58,12 @@ export type BookMetadata = {
   description?: string;
   subject?: string | string[] | Contributor;
   identifier?: string;
+  isbn?: string;
   altIdentifier?: string | string[] | Identifier;
+  belongsTo?: {
+    collection?: Array<Collection> | Collection;
+    series?: Array<Collection> | Collection;
+  };
 
   subtitle?: string;
   series?: string;
@@ -57,14 +77,14 @@ export type BookMetadata = {
 
 export interface BookDoc {
   metadata: BookMetadata;
-  rendition?: {
+  rendition: {
     layout?: 'pre-paginated' | 'reflowable';
     spread?: 'auto' | 'none';
     viewport?: { width: number; height: number };
   };
   dir: string;
   toc?: Array<TOCItem>;
-  sections?: Array<SectionItem>;
+  sections: Array<SectionItem>;
   transformTarget?: EventTarget;
   splitTOCHref(href: string): Array<string | number>;
   getCover(): Promise<Blob | null>;
@@ -105,7 +125,11 @@ export class DocumentLoader {
 
   private async isZip(): Promise<boolean> {
     const arr = new Uint8Array(await this.file.slice(0, 4).arrayBuffer());
-    return arr[0] === 0x50 && arr[1] === 0x4b && arr[2] === 0x03 && arr[3] === 0x04;
+    // Standard local file header signature is PK\x03\x04, but some non-conformant
+    // EPUB writers emit malformed bytes (e.g., PK\x03\x02) on the first entry.
+    // The archive is still readable via the central directory, so don't gate on
+    // the 4th byte. PK\x03 alone is enough to identify a local file header.
+    return arr[0] === 0x50 && arr[1] === 0x4b && arr[2] === 0x03;
   }
 
   private async isPDF(): Promise<boolean> {
@@ -141,26 +165,37 @@ export class DocumentLoader {
       return null;
     };
 
-    const { configure, ZipReader, BlobReader, TextWriter, BlobWriter } = await import(
-      '@zip.js/zip.js'
-    );
+    await configureZip();
+    const { ZipReader, BlobReader, TextWriter, BlobWriter } = await import('@zip.js/zip.js');
     type Entry = import('@zip.js/zip.js').Entry;
-    configure({ useWebWorkers: false });
     const reader = new ZipReader(new BlobReader(this.file));
     const entries = await reader.getEntries();
     const map = new Map(entries.map((entry) => [entry.filename, entry]));
+    const lowercaseMap = new Map<string, Entry | null>();
+    for (const entry of entries) {
+      const lowercaseName = entry.filename.toLowerCase();
+      const existing = lowercaseMap.get(lowercaseName);
+      lowercaseMap.set(
+        lowercaseName,
+        existing && existing.filename !== entry.filename ? null : entry,
+      );
+    }
+    const getEntry = (name: string) =>
+      map.get(name) ?? lowercaseMap.get(name.toLowerCase()) ?? null;
     const load =
       (f: (entry: Entry, type?: string) => Promise<string | Blob> | null) =>
-      (name: string, ...args: [string?]) =>
-        map.has(name) ? f(map.get(name)!, ...args) : null;
+      (name: string, ...args: [string?]) => {
+        const entry = getEntry(name);
+        return entry ? f(entry, ...args) : null;
+      };
 
     const loadText = load((entry: Entry) =>
-      entry.getData ? entry.getData(new TextWriter()) : null,
+      !entry.directory ? entry.getData(new TextWriter()) : null,
     );
     const loadBlob = load((entry: Entry, type?: string) =>
-      entry.getData ? entry.getData(new BlobWriter(type!)) : null,
+      !entry.directory ? entry.getData(new BlobWriter(type!)) : null,
     );
-    const getSize = (name: string) => map.get(name)?.uncompressedSize ?? 0;
+    const getSize = (name: string) => getEntry(name)?.uncompressedSize ?? 0;
 
     return { entries, loadText, loadBlob, getSize, getComment, sha1: undefined };
   }
@@ -192,48 +227,56 @@ export class DocumentLoader {
     if (!this.file.size) {
       throw new Error('File is empty');
     }
-    if (await this.isZip()) {
-      const loader = await this.makeZipLoader();
-      const { entries } = loader;
+    try {
+      if (await this.isZip()) {
+        const loader = await this.makeZipLoader();
+        const { entries } = loader;
 
-      if (this.isCBZ()) {
-        const { makeComicBook } = await import('foliate-js/comic-book.js');
-        book = await makeComicBook(loader, this.file);
-        format = 'CBZ';
-      } else if (this.isFBZ()) {
-        const entry = entries.find((entry) => entry.filename.endsWith(`.${EXTS.FB2}`));
-        const blob = await loader.loadBlob((entry ?? entries[0]!).filename);
+        if (this.isCBZ()) {
+          const { makeComicBook } = await import('foliate-js/comic-book.js');
+          book = await makeComicBook(loader, this.file);
+          format = 'CBZ';
+        } else if (this.isFBZ()) {
+          const entry = entries.find((entry) => entry.filename.endsWith(`.${EXTS.FB2}`));
+          const blob = await loader.loadBlob((entry ?? entries[0]!).filename);
+          const { makeFB2 } = await import('foliate-js/fb2.js');
+          book = await makeFB2(blob);
+          format = 'FBZ';
+        } else {
+          const { EPUB } = await import('foliate-js/epub.js');
+          book = await new EPUB(loader).init();
+          format = 'EPUB';
+        }
+      } else if (await this.isPDF()) {
+        const { makePDF } = await import('foliate-js/pdf.js');
+        book = await makePDF(this.file);
+        format = 'PDF';
+      } else if (await (await import('foliate-js/mobi.js')).isMOBI(this.file)) {
+        const fflate = await import('foliate-js/vendor/fflate.js');
+        const { MOBI } = await import('foliate-js/mobi.js');
+        book = await new MOBI({ unzlib: fflate.unzlibSync }).open(this.file);
+        const ext = this.file.name.split('.').pop()?.toLowerCase();
+        switch (ext) {
+          case 'azw':
+            format = 'AZW';
+            break;
+          case 'azw3':
+            format = 'AZW3';
+            break;
+          default:
+            format = 'MOBI';
+        }
+      } else if (this.isFB2()) {
         const { makeFB2 } = await import('foliate-js/fb2.js');
-        book = await makeFB2(blob);
-        format = 'FBZ';
-      } else {
-        const { EPUB } = await import('foliate-js/epub.js');
-        book = await new EPUB(loader).init();
-        format = 'EPUB';
+        book = await makeFB2(this.file);
+        format = 'FB2';
       }
-    } else if (await this.isPDF()) {
-      const { makePDF } = await import('foliate-js/pdf.js');
-      book = await makePDF(this.file);
-      format = 'PDF';
-    } else if (await (await import('foliate-js/mobi.js')).isMOBI(this.file)) {
-      const fflate = await import('foliate-js/vendor/fflate.js');
-      const { MOBI } = await import('foliate-js/mobi.js');
-      book = await new MOBI({ unzlib: fflate.unzlibSync }).open(this.file);
-      const ext = this.file.name.split('.').pop()?.toLowerCase();
-      switch (ext) {
-        case 'azw':
-          format = 'AZW';
-          break;
-        case 'azw3':
-          format = 'AZW3';
-          break;
-        default:
-          format = 'MOBI';
+    } catch (e: unknown) {
+      console.error('Failed to open document:', e);
+      if (e instanceof Error && e.message?.includes('not a valid zip')) {
+        throw new Error('Unsupported or corrupted book file');
       }
-    } else if (this.isFB2()) {
-      const { makeFB2 } = await import('foliate-js/fb2.js');
-      book = await makeFB2(this.file);
-      format = 'FB2';
+      throw e;
     }
     return { book, format } as { book: BookDoc; format: BookFormat };
   }
@@ -241,7 +284,17 @@ export class DocumentLoader {
 
 export const getDirection = (doc: Document) => {
   const { defaultView } = doc;
-  const { writingMode, direction } = defaultView!.getComputedStyle(doc.body);
+  let { writingMode, direction } = defaultView!.getComputedStyle(doc.body);
+  // Some EPUBs set writing-mode on the first child of body instead of body itself
+  if (!writingMode || writingMode === 'horizontal-tb') {
+    const firstChild = doc.body.querySelector(':scope > :not([cfi-inert])');
+    if (firstChild) {
+      const childStyle = defaultView!.getComputedStyle(firstChild);
+      if (childStyle.writingMode === 'vertical-rl' || childStyle.writingMode === 'vertical-lr') {
+        writingMode = childStyle.writingMode;
+      }
+    }
+  }
   const vertical = writingMode === 'vertical-rl' || writingMode === 'vertical-lr';
   const rtl = doc.body.dir === 'rtl' || direction === 'rtl' || doc.documentElement.dir === 'rtl';
   return { vertical, rtl };
@@ -268,4 +321,25 @@ export const getMimeTypeFromFileExt = (ext: string): string => {
     }
   }
   return 'application/octet-stream';
+};
+
+export const convertBlobUrlToDataUrl = async (blobUrl: string): Promise<string> => {
+  try {
+    const response = await fetch(blobUrl);
+    if (!response.ok) {
+      throw new Error(
+        `Failed to fetch blob from "${blobUrl}": ${response.status} ${response.statusText}`,
+      );
+    }
+    const blob = await response.blob();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } catch (error) {
+    console.error('Failed to convert blob to data URL:', error);
+    throw error;
+  }
 };

@@ -9,12 +9,14 @@ import MenuItem from '@/components/MenuItem';
 import Menu from '@/components/Menu';
 
 interface QuickActionMenuProps {
+  menuClassName?: string;
   selectedAction?: AnnotationToolType | null;
   onActionSelect: (action: AnnotationToolType) => void;
   setIsDropdownOpen?: (open: boolean) => void;
 }
 
 const QuickActionMenu: React.FC<QuickActionMenuProps> = ({
+  menuClassName,
   selectedAction,
   onActionSelect,
   setIsDropdownOpen,
@@ -27,7 +29,11 @@ const QuickActionMenu: React.FC<QuickActionMenuProps> = ({
       eventDispatcher.dispatch('toast', {
         type: 'info',
         timeout: 2000,
-        message: _('Quick action disabled'),
+        message: _('Instant {{action}} Disabled', {
+          action: _(
+            annotationToolQuickActions.find((btn) => btn.type === action)?.label || _('Annotation'),
+          ),
+        }),
       });
     } else {
       eventDispatcher.dispatch('toast', {
@@ -42,8 +48,9 @@ const QuickActionMenu: React.FC<QuickActionMenuProps> = ({
   return (
     <Menu
       className={clsx(
-        'annotation-quick-action-menu dropdown-content z-20 mt-1 border',
+        'annotation-quick-action-menu dropdown-content z-20 mt-1.5 border',
         'bgcolor-base-200 shadow-2xl',
+        menuClassName,
       )}
       style={{
         maxWidth: `${window.innerWidth - 40}px`,
@@ -53,7 +60,7 @@ const QuickActionMenu: React.FC<QuickActionMenuProps> = ({
       {annotationToolQuickActions.map((button) => (
         <MenuItem
           key={button.type}
-          label={_(button.label)}
+          label={_('Instant {{action}}', { action: _(button.label) })}
           tooltip={_(button.tooltip)}
           buttonClass={selectedAction === button.type ? 'bg-base-300/85' : ''}
           Icon={button.Icon}

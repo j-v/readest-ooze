@@ -61,27 +61,34 @@ vi.mock('@/services/environment', async (importOriginal) => {
         : {}), // keep all real default fields
       API_BASE: 'http://localhost',
       ENABLE_TRANSLATOR: false,
-      getAppService: vi.fn().mockResolvedValue(null),
+      // EnvProvider's mount effect calls appService.loadSettings() to seed
+      // replica sync. Stubbing with loadSettings returning {} (no
+      // replicaDeviceId) makes init early-exit cleanly. Returning null
+      // would crash on `service.loadSettings()` and spam stderr.
+      getAppService: vi.fn().mockResolvedValue({
+        loadSettings: vi.fn().mockResolvedValue({}),
+      }),
     },
   };
 });
 
 import { EnvProvider } from '@/context/EnvContext';
+import { AuthProvider } from '@/context/AuthContext';
+import { DEFAULT_SYSTEM_SETTINGS } from '@/services/constants';
 
 function renderWithProviders(ui: React.ReactNode) {
-  return render(<EnvProvider>{ui}</EnvProvider>);
+  return render(
+    <EnvProvider>
+      <AuthProvider>{ui}</AuthProvider>
+    </EnvProvider>,
+  );
 }
 
 describe('ProofreadRulesManager', () => {
   beforeEach(() => {
     // Reset stores
     (useSettingsStore.setState as unknown as (state: unknown) => void)({
-      settings: {
-        globalViewSettings: { proofreadRules: [] },
-        kosync: {
-          enabled: false,
-        },
-      },
+      settings: DEFAULT_SYSTEM_SETTINGS,
     });
     (useReaderStore.setState as unknown as (state: unknown) => void)({ viewStates: {} });
     useSidebarStore.setState({ sideBarBookKey: null });
@@ -96,6 +103,7 @@ describe('ProofreadRulesManager', () => {
     // Arrange: populate stores
     (useSettingsStore.setState as unknown as (state: unknown) => void)({
       settings: {
+        ...DEFAULT_SYSTEM_SETTINGS,
         globalViewSettings: {
           proofreadRules: [
             {
@@ -122,7 +130,6 @@ describe('ProofreadRulesManager', () => {
             },
           ],
         },
-        kosync: { enabled: false },
       },
     });
 
@@ -159,8 +166,8 @@ describe('ProofreadRulesManager', () => {
     // Arrange: populate stores with a selection rule persisted in book config
     (useSettingsStore.setState as unknown as (state: unknown) => void)({
       settings: {
+        ...DEFAULT_SYSTEM_SETTINGS,
         globalViewSettings: { proofreadRules: [] },
-        kosync: { enabled: false },
       },
     });
 
@@ -279,10 +286,10 @@ describe('ProofreadRulesManager', () => {
 
     (useSettingsStore.setState as unknown as (state: unknown) => void)({
       settings: {
+        ...DEFAULT_SYSTEM_SETTINGS,
         globalViewSettings: {
           proofreadRules: [libraryRule],
         },
-        kosync: { enabled: false },
       },
     });
 
@@ -359,8 +366,8 @@ describe('ProofreadRulesManager', () => {
 
     (useSettingsStore.setState as unknown as (state: unknown) => void)({
       settings: {
+        ...DEFAULT_SYSTEM_SETTINGS,
         globalViewSettings: { proofreadRules: [] },
-        kosync: { enabled: false },
       },
     });
 
@@ -413,8 +420,8 @@ describe('ProofreadRulesManager', () => {
     // Arrange stores
     (useSettingsStore.setState as unknown as (state: unknown) => void)({
       settings: {
+        ...DEFAULT_SYSTEM_SETTINGS,
         globalViewSettings: { proofreadRules: [] },
-        kosync: { enabled: false },
       },
     });
     (useReaderStore.setState as unknown as (state: unknown) => void)({
@@ -448,8 +455,8 @@ describe('ProofreadRulesManager', () => {
   it('shows empty state messages when no rules exist', async () => {
     (useSettingsStore.setState as unknown as (state: unknown) => void)({
       settings: {
+        ...DEFAULT_SYSTEM_SETTINGS,
         globalViewSettings: { proofreadRules: [] },
-        kosync: { enabled: false },
       },
     });
 
@@ -504,10 +511,10 @@ describe('ProofreadRulesManager', () => {
 
     (useSettingsStore.setState as unknown as (state: unknown) => void)({
       settings: {
+        ...DEFAULT_SYSTEM_SETTINGS,
         globalViewSettings: {
           proofreadRules: [libraryRule],
         },
-        kosync: { enabled: false },
       },
     });
 

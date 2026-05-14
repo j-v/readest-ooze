@@ -1,15 +1,17 @@
 import { getUserLocale } from '@/utils/misc';
 import { TTSClient, TTSMessageEvent } from './TTSClient';
 import { EdgeSpeechTTS, EdgeTTSPayload, EDGE_TTS_PROTOCOL } from '@/libs/edgeTTS';
+import { TTSGranularity, TTSVoice, TTSVoicesGroup } from './types';
+import { AppService } from '@/types/system';
 import { parseSSMLMarks } from '@/utils/ssml';
 import { TTSController } from './TTSController';
 import { TTSUtils } from './TTSUtils';
-import { TTSGranularity, TTSVoice, TTSVoicesGroup } from './types';
 
 export class EdgeTTSClient implements TTSClient {
   name = 'edge-tts';
   initialized = false;
   controller?: TTSController;
+  appService?: AppService | null;
 
   #voices: TTSVoice[] = [];
   #primaryLang = 'en';
@@ -25,8 +27,9 @@ export class EdgeTTSClient implements TTSClient {
   #startedAt = 0;
   #fadeCompensation: number | null = null;
 
-  constructor(controller?: TTSController) {
+  constructor(controller?: TTSController, appService?: AppService | null) {
     this.controller = controller;
+    this.appService = appService;
   }
 
   async init(protocol: EDGE_TTS_PROTOCOL = 'wss') {
@@ -148,6 +151,14 @@ export class EdgeTTSClient implements TTSClient {
             audio.onerror = null;
             audio.src = '';
           };
+          let resolved = false;
+          const handleEnded = () => {
+            if (resolved) return;
+            resolved = true;
+            cleanUp();
+            resolve({ code: 'end', message: `Chunk finished: ${mark.name}` });
+          };
+
           abortHandler = () => {
             cleanUp();
             resolve({ code: 'error', message: 'Aborted' });
@@ -158,10 +169,7 @@ export class EdgeTTSClient implements TTSClient {
           } else {
             signal.addEventListener('abort', abortHandler);
           }
-          audio.onended = () => {
-            cleanUp();
-            resolve({ code: 'end', message: `Chunk finished: ${mark.name}` });
-          };
+          audio.onended = handleEnded;
           audio.onerror = (e) => {
             cleanUp();
             console.warn('Audio playback error:', e);
@@ -169,9 +177,16 @@ export class EdgeTTSClient implements TTSClient {
           };
           this.#isPlaying = true;
           audio.src = audioUrl || '';
+          if (!this.appService?.isLinuxApp) {
+            audio.playbackRate = this.#rate;
+          }
           audio
             .play()
-            .then(() => (audio.playbackRate = this.#rate))
+            .then(() => {
+              if (this.appService?.isLinuxApp) {
+                audio.playbackRate = this.#rate;
+              }
+            })
             .catch((err) => {
               cleanUp();
               console.error('Failed to play audio:', err);

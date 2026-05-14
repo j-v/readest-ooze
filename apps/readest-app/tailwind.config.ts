@@ -1,5 +1,5 @@
 import type { Config } from 'tailwindcss';
-import { themes } from './src/styles/themes';
+import { themes } from './src/styles/themes.ts';
 import daisyui from 'daisyui';
 import typography from '@tailwindcss/typography';
 import plugin from 'tailwindcss/plugin';
@@ -19,6 +19,9 @@ const config: Config = {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+      },
       colors: {
         background: 'var(--background)',
         foreground: 'var(--foreground)',

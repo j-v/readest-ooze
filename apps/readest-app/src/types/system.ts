@@ -1,14 +1,20 @@
 import { SystemSettings } from './settings';
-import { Book, BookConfig, BookContent, ViewSettings } from './book';
+import { Book, BookConfig, BookContent, ImportBookOptions, ViewSettings } from './book';
 import { BookMetadata } from '@/libs/document';
+import type { BookNav } from '@/services/nav';
 import { ProgressHandler } from '@/utils/transfer';
 import { CustomFont, CustomFontInfo } from '@/styles/fonts';
 import { CustomTextureInfo } from '@/styles/textures';
+import { DatabaseOpts, DatabaseService } from './database';
+import { SchemaType } from '@/services/database/migrate';
+import type { ImportedDictionary } from '@/services/dictionaries/types';
+import type { ImportDictionariesResult } from '@/services/dictionaries/dictionaryService';
+import type { SelectedFile } from '@/hooks/useFileSelector';
 
-export type AppPlatform = 'web' | 'tauri';
+export type AppPlatform = 'web' | 'tauri' | 'node';
 export type OsPlatform = 'android' | 'ios' | 'macos' | 'windows' | 'linux' | 'unknown';
 // prettier-ignore
-export type BaseDir = | 'Books' | 'Settings' | 'Data' | 'Fonts' | 'Images' | 'Log' | 'Cache' | 'Temp' | 'None';
+export type BaseDir = | 'Books' | 'Settings' | 'Data' | 'Fonts' | 'Images' | 'Dictionaries' | 'Log' | 'Cache' | 'Temp' | 'None';
 export type DeleteAction = 'cloud' | 'local' | 'both';
 export type SelectDirectoryMode = 'read' | 'write';
 export type DistChannel = 'readest' | 'playstore' | 'appstore' | 'unknown';
@@ -50,7 +56,7 @@ export interface FileSystem {
   getBlobURL(path: string, base: BaseDir): Promise<string>;
   getImageURL(path: string): Promise<string>;
   openFile(path: string, base: BaseDir, filename?: string): Promise<File>;
-  copyFile(srcPath: string, dstPath: string, base: BaseDir): Promise<void>;
+  copyFile(srcPath: string, srcBase: BaseDir, dstPath: string, dstBase: BaseDir): Promise<void>;
   readFile(path: string, base: BaseDir, mode: 'text' | 'binary'): Promise<string | ArrayBuffer>;
   writeFile(path: string, base: BaseDir, content: string | ArrayBuffer | File): Promise<void>;
   removeFile(path: string, base: BaseDir): Promise<void>;
@@ -85,20 +91,25 @@ export interface AppService {
   isLinuxApp: boolean;
   isPortableApp: boolean;
   isDesktopApp: boolean;
+  isAppImage: boolean;
   isEink: boolean;
   canCustomizeRootDir: boolean;
   canReadExternalDir: boolean;
+  supportsCanvasContext2DFilter: boolean;
   distChannel: DistChannel;
+  storefrontRegionCode: string | null;
+  isOnlineCatalogsAccessible: boolean;
 
   init(): Promise<void>;
   openFile(path: string, base: BaseDir): Promise<File>;
-  copyFile(srcPath: string, dstPath: string, base: BaseDir): Promise<void>;
+  copyFile(srcPath: string, srcBase: BaseDir, dstPath: string, dstBase: BaseDir): Promise<void>;
   readFile(path: string, base: BaseDir, mode: 'text' | 'binary'): Promise<string | ArrayBuffer>;
   writeFile(path: string, base: BaseDir, content: string | ArrayBuffer | File): Promise<void>;
   createDir(path: string, base: BaseDir, recursive?: boolean): Promise<void>;
   deleteFile(path: string, base: BaseDir): Promise<void>;
   deleteDir(path: string, base: BaseDir, recursive?: boolean): Promise<void>;
   exists(path: string, base: BaseDir): Promise<boolean>;
+  isDirectory(path: string, base: BaseDir): Promise<boolean>;
   getImageURL(path: string): Promise<string>;
 
   setCustomRootDir(customRootDir: string): Promise<void>;
@@ -107,7 +118,20 @@ export interface AppService {
   selectDirectory(mode: SelectDirectoryMode): Promise<string>;
   selectFiles(name: string, extensions: string[]): Promise<string[]>;
   readDirectory(path: string, base: BaseDir): Promise<FileItem[]>;
-  saveFile(filename: string, content: string | ArrayBuffer, mimeType?: string): Promise<boolean>;
+  saveFile(
+    filename: string,
+    content: string | ArrayBuffer,
+    options?: {
+      filePath?: string;
+      mimeType?: string;
+      share?: boolean;
+      // Anchor point for the macOS / iPad share sheet. Coordinates are in
+      // CSS pixels of the WebView; the sharekit plugin maps them onto the
+      // native NSView. Without this, NSSharingServicePicker defaults to
+      // (0,0) of the WebView and pops at the top-left of the window.
+      sharePosition?: { x: number; y: number; preferredEdge?: 'top' | 'bottom' | 'left' | 'right' };
+    },
+  ): Promise<boolean>;
 
   getDefaultViewSettings(): ViewSettings;
   loadSettings(): Promise<SystemSettings>;
@@ -116,14 +140,13 @@ export interface AppService {
   deleteFont(font: CustomFont): Promise<void>;
   importImage(file?: string | File): Promise<CustomTextureInfo | null>;
   deleteImage(texture: CustomTextureInfo): Promise<void>;
-  importBook(
-    file: string | File,
-    books: Book[],
-    saveBook?: boolean,
-    saveCover?: boolean,
-    overwrite?: boolean,
-    transient?: boolean,
-  ): Promise<Book | null>;
+  importDictionaries(
+    files: SelectedFile[],
+    existingDictionaries?: ImportedDictionary[],
+  ): Promise<ImportDictionariesResult>;
+  deleteDictionary(dict: ImportedDictionary): Promise<void>;
+  importBook(file: string | File, books: Book[], options?: ImportBookOptions): Promise<Book | null>;
+  refreshBookMetadata(book: Book): Promise<boolean>;
   deleteBook(book: Book, deleteAction: DeleteAction): Promise<void>;
   uploadBook(book: Book, onProgress?: ProgressHandler): Promise<void>;
   downloadBook(
@@ -132,6 +155,31 @@ export interface AppService {
     redownload?: boolean,
     onProgress?: ProgressHandler,
   ): Promise<void>;
+  uploadFileToCloud(
+    lfp: string,
+    cfp: string,
+    base: BaseDir,
+    handleProgress: ProgressHandler,
+    hash: string,
+    temp?: boolean,
+  ): Promise<string | undefined>;
+  uploadReplicaFile(
+    kind: string,
+    replicaId: string,
+    filename: string,
+    lfp: string,
+    base: BaseDir,
+    onProgress: ProgressHandler,
+  ): Promise<void>;
+  downloadReplicaFile(
+    kind: string,
+    replicaId: string,
+    filename: string,
+    lfp: string,
+    base: BaseDir,
+    onProgress?: ProgressHandler,
+  ): Promise<void>;
+  deleteReplicaBundle(kind: string, replicaId: string, filenames: string[]): Promise<void>;
   downloadBookCovers(books: Book[], redownload?: boolean): Promise<void>;
   exportBook(book: Book): Promise<boolean>;
   isBookAvailable(book: Book): Promise<boolean>;
@@ -139,6 +187,8 @@ export interface AppService {
   loadBookConfig(book: Book, settings: SystemSettings): Promise<BookConfig>;
   fetchBookDetails(book: Book): Promise<BookMetadata>;
   saveBookConfig(book: Book, config: BookConfig, settings?: SystemSettings): Promise<void>;
+  loadBookNav(book: Book): Promise<BookNav | null>;
+  saveBookNav(book: Book, nav: BookNav): Promise<void>;
   loadBookContent(book: Book): Promise<BookContent>;
   loadLibraryBooks(): Promise<Book[]>;
   saveLibraryBooks(books: Book[]): Promise<void>;
@@ -146,4 +196,11 @@ export interface AppService {
   getCoverImageBlobUrl(book: Book): Promise<string>;
   generateCoverImageUrl(book: Book): Promise<string>;
   updateCoverImage(book: Book, imageUrl?: string, imageFile?: string): Promise<void>;
+  ask(message: string): Promise<boolean>;
+  openDatabase(
+    schema: SchemaType,
+    path: string,
+    base: BaseDir,
+    opts?: DatabaseOpts,
+  ): Promise<DatabaseService>;
 }

@@ -25,6 +25,7 @@ import ViewMenu from './ViewMenu';
 interface LibraryHeaderProps {
   isSelectMode: boolean;
   isSelectAll: boolean;
+  onPullLibrary: () => void;
   onImportBooksFromFiles: () => void;
   onImportBooksFromDirectory?: () => void;
   onOpenCatalogManager: () => void;
@@ -36,6 +37,7 @@ interface LibraryHeaderProps {
 const LibraryHeader: React.FC<LibraryHeaderProps> = ({
   isSelectMode,
   isSelectAll,
+  onPullLibrary,
   onImportBooksFromFiles,
   onImportBooksFromDirectory,
   onOpenCatalogManager,
@@ -101,7 +103,9 @@ const LibraryHeader: React.FC<LibraryHeaderProps> = ({
       style={{
         marginTop: appService?.hasSafeAreaInset
           ? `max(${insets.top}px, ${systemUIVisible ? statusBarHeight : 0}px)`
-          : '0px',
+          : appService?.hasTrafficLight
+            ? '-2px'
+            : '0px',
       }}
     >
       <div className='flex w-full items-center justify-between space-x-6 sm:space-x-12'>
@@ -149,7 +153,7 @@ const LibraryHeader: React.FC<LibraryHeaderProps> = ({
             <Dropdown
               label={_('Import Books')}
               className={clsx(
-                'exclude-title-bar-mousedown dropdown-bottom dropdown-center flex h-6 cursor-pointer justify-center',
+                'exclude-title-bar-mousedown dropdown-bottom dropdown-center cursor-pointer',
               )}
               buttonClassName='p-0 h-6 min-h-6 w-6 flex touch-target items-center justify-center !bg-transparent'
               toggleButton={<PiPlus role='none' className='m-0.5 h-5 w-5' />}
@@ -209,7 +213,7 @@ const LibraryHeader: React.FC<LibraryHeaderProps> = ({
               buttonClassName='btn btn-ghost h-8 min-h-8 w-8 p-0'
               toggleButton={<MdOutlineMenu role='none' size={iconSize18} />}
             >
-              <SettingsMenu />
+              <SettingsMenu onPullLibrary={onPullLibrary} />
             </Dropdown>
             {appService?.hasWindowBar && (
               <WindowButtons

@@ -4,7 +4,7 @@ import { useSidebarStore } from '@/store/sidebarStore';
 import { useReaderStore } from '@/store/readerStore';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { isCfiInLocation } from '@/utils/cfi';
-import { findTocItemBS } from '@/utils/toc';
+import { findTocItemBS } from '@/services/nav';
 import { BookNoteType } from '@/types/book';
 import { TOCItem } from '@/libs/document';
 
@@ -103,14 +103,7 @@ export function useBooknotesNav(bookKey: string, toc: TOCItem[]) {
         getView(bookKey)?.goTo(sorted[0]!.cfi);
       }
     },
-    [
-      allBooknotes,
-      bookKey,
-      setActiveBooknoteType,
-      setBooknoteResults,
-      setBooknoteIndex,
-      getView,
-    ],
+    [allBooknotes, bookKey, setActiveBooknoteType, setBooknoteResults, setBooknoteIndex, getView],
   );
 
   const handleShowResults = useCallback(() => {

@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import React, { useRef } from 'react';
+import { useRef } from 'react';
 import { MdInfoOutline } from 'react-icons/md';
 import { Book } from '@/types/book';
 import { useThemeStore } from '@/store/themeStore';
@@ -39,7 +39,9 @@ const BookCard = ({ book }: { book: Book }) => {
         />
       </div>
       <div className='min-w-0 flex-1'>
-        <h4 className='line-clamp-2 w-[90%] text-sm font-semibold'>{formatTitle(title)}</h4>
+        <h4 className='line-clamp-2 w-[90%] text-sm font-semibold'>
+          {formatTitle(title).replace(/\u00A0/g, ' ')}
+        </h4>
         <p className='truncate text-xs opacity-75'>{formatAuthors(author)}</p>
       </div>
       <div className='flex items-center gap-1'>

@@ -20,6 +20,7 @@ import { useTransferQueue } from '@/hooks/useTransferQueue';
 import { useTheme } from '@/hooks/useTheme';
 import { useLibrary } from '@/hooks/useLibrary';
 import { eventDispatcher } from '@/utils/event';
+import { navigateToReader } from '@/utils/nav';
 import { getFileExtFromMimeType } from '@/libs/document';
 import { OPDSFeed, OPDSPublication, OPDSSearch } from '@/types/opds';
 import {
@@ -36,11 +37,15 @@ import {
   needsProxy,
   probeFilename,
 } from './utils/opdsReq';
+import { ImportError } from '@/services/errors';
 import { READEST_OPDS_USER_AGENT } from '@/services/constants';
+import { buildPseStreamFileName } from '@/services/opds/pseStream';
 import { FeedView } from './components/FeedView';
 import { PublicationView } from './components/PublicationView';
 import { SearchView } from './components/SearchView';
 import { Navigation } from './components/Navigation';
+import { normalizeOPDSCustomHeaders } from './utils/customHeaders';
+import { stashOPDSReturnTarget } from './utils/opdsClose';
 
 type ViewMode = 'feed' | 'publication' | 'search' | 'loading' | 'error';
 
@@ -87,6 +92,7 @@ export default function BrowserPage() {
   const catalogId = searchParams?.get('id') || '';
   const usernameRef = useRef<string | null | undefined>(undefined);
   const passwordRef = useRef<string | null | undefined>(undefined);
+  const customHeadersRef = useRef<Record<string, string>>({});
   const startURLRef = useRef<string | null | undefined>(undefined);
   const loadingOPDSRef = useRef(false);
   const historyIndexRef = useRef(-1);
@@ -137,11 +143,11 @@ export default function BrowserPage() {
           formData[param.name] = param.value || '';
         }
       });
-      const map = new Map<string | null, Map<string | null, string>>();
+      const map = new Map<string | undefined, Map<string, string>>();
 
       for (const param of search.params || []) {
         const value = formData[param.name] || '';
-        const ns = param.ns ?? null;
+        const ns = param.ns ?? undefined;
 
         if (map.has(ns)) {
           map.get(ns)!.set(param.name, value);
@@ -171,7 +177,8 @@ export default function BrowserPage() {
         const useProxy = isWebAppPlatform();
         const username = usernameRef.current || '';
         const password = passwordRef.current || '';
-        const res = await fetchWithAuth(url, username, password, useProxy);
+        const customHeaders = customHeadersRef.current;
+        const res = await fetchWithAuth(url, username, password, useProxy, {}, customHeaders);
 
         if (!res.ok) {
           if (isSearch && res.status === 404) {
@@ -194,6 +201,11 @@ export default function BrowserPage() {
               type: 'error',
             });
             setTimeout(() => {
+              // router.back() (not closeOPDSBrowser) so the user can
+              // resume their browser history if the catalog was just
+              // temporarily down. stashOPDSReturnTarget ensures the
+              // deep-link still applies when back lands on /library.
+              stashOPDSReturnTarget(searchParams);
               router.back();
             }, 5000);
             throw new Error(errorMessage);
@@ -225,7 +237,7 @@ export default function BrowserPage() {
               addToHistory(url, newState, 'feed', null);
             }
           } else if (localName === 'entry') {
-            const publication = getPublication(doc.documentElement);
+            const publication = getPublication(doc.documentElement) as OPDSPublication;
             const newState = {
               publication,
               baseURL: responseURL,
@@ -240,7 +252,7 @@ export default function BrowserPage() {
               addToHistory(url, newState, 'publication', null);
             }
           } else if (localName === 'OpenSearchDescription') {
-            const search = getOpenSearch(doc);
+            const search = getOpenSearch(doc) as OPDSSearch;
             const newState = {
               search,
               baseURL: responseURL,
@@ -263,6 +275,7 @@ export default function BrowserPage() {
             const htmlDoc = new DOMParser().parseFromString(text, type as DOMParserSupportedType);
 
             if (!htmlDoc.head) {
+              stashOPDSReturnTarget(searchParams);
               router.back();
               throw new Error(`Failed to load OPDS feed: ${res.status} ${res.statusText}`);
             }
@@ -272,6 +285,7 @@ export default function BrowserPage() {
             );
 
             if (!link) {
+              stashOPDSReturnTarget(searchParams);
               router.back();
               throw new Error('Document has no link to OPDS feeds');
             }
@@ -321,6 +335,7 @@ export default function BrowserPage() {
         usernameRef.current = null;
         passwordRef.current = null;
       }
+      customHeadersRef.current = normalizeOPDSCustomHeaders(catalog?.customHeaders);
       if (libraryLoaded) {
         loadOPDS(url);
       }
@@ -378,8 +393,8 @@ export default function BrowserPage() {
                 required: true,
               },
             ],
-            search: (map: Map<string | null, Map<string | null, string>>) => {
-              const defaultParams = map.get(null);
+            search: (map: Map<string | undefined, Map<string, string>>) => {
+              const defaultParams = map.get(undefined);
               const searchTerms = defaultParams?.get('searchTerms') || '';
               const decodedURL = decodeURIComponent(searchURL);
               return decodedURL.replace('{searchTerms}', encodeURIComponent(searchTerms));
@@ -422,28 +437,32 @@ export default function BrowserPage() {
         } else {
           const username = usernameRef.current || '';
           const password = passwordRef.current || '';
+          const customHeaders = customHeadersRef.current;
           const useProxy = needsProxy(url);
-          let downloadUrl = useProxy ? getProxiedURL(url, '', true) : url;
+          let downloadUrl = useProxy ? getProxiedURL(url, '', true, customHeaders) : url;
           const headers: Record<string, string> = {
             'User-Agent': READEST_OPDS_USER_AGENT,
             Accept: '*/*',
+            ...(!useProxy ? customHeaders : {}),
           };
           if (username || password) {
-            const authHeader = await probeAuth(url, username, password, useProxy);
+            const authHeader = await probeAuth(url, username, password, useProxy, customHeaders);
             if (authHeader) {
-              headers['Authorization'] = authHeader;
-              downloadUrl = useProxy ? getProxiedURL(url, authHeader, true) : url;
+              if (!useProxy) {
+                headers['Authorization'] = authHeader;
+              }
+              downloadUrl = useProxy ? getProxiedURL(url, authHeader, true, customHeaders) : url;
             }
           }
 
-          const probedFilename = await probeFilename(url, useProxy, headers);
           const pathname = decodeURIComponent(new URL(url).pathname);
           const ext = getFileExtFromMimeType(parsed?.mediaType) || getFileExtFromPath(pathname);
           const basename = pathname.replaceAll('/', '_');
-          const filename = probedFilename ? probedFilename : ext ? `${basename}.${ext}` : basename;
-          const dstFilePath = await appService?.resolveFilePath(filename, 'Cache');
-          console.log('Downloading to:', dstFilePath);
-          await downloadFile({
+          const filename = ext ? `${basename}.${ext}` : basename;
+          let dstFilePath = await appService?.resolveFilePath(filename, 'Cache');
+          console.log('Downloading to:', url, dstFilePath);
+
+          const responseHeaders = await downloadFile({
             appService,
             dst: dstFilePath,
             cfp: '',
@@ -453,25 +472,61 @@ export default function BrowserPage() {
             skipSslVerification: true,
             onProgress,
           });
-          const { library, setLibrary } = useLibraryStore.getState();
-          const book = await appService.importBook(dstFilePath, library);
-          if (user && book && !book.uploadedAt && settings.autoUpload) {
-            setTimeout(() => {
-              transferManager.queueUpload(book);
-            }, 3000);
+          const probedFilename = await probeFilename(responseHeaders);
+          if (probedFilename) {
+            const newFilePath = await appService?.resolveFilePath(probedFilename, 'Cache');
+            await appService?.copyFile(dstFilePath, 'None', newFilePath, 'None');
+            await appService?.deleteFile(dstFilePath, 'None');
+            console.log('Renamed downloaded file to:', newFilePath);
+            dstFilePath = newFilePath;
           }
-          setLibrary(library);
-          appService.saveLibraryBooks(library);
-          return book;
+
+          const { library, setLibrary } = useLibraryStore.getState();
+          try {
+            const book = await appService.importBook(dstFilePath, library);
+            if (user && book && !book.uploadedAt && settings.autoUpload) {
+              setTimeout(() => {
+                transferManager.queueUpload(book);
+              }, 3000);
+            }
+            setLibrary(library);
+            appService.saveLibraryBooks(library);
+            return book;
+          } catch (importError) {
+            console.error('Import error:', importError);
+            throw new ImportError(importError);
+          }
         }
       } catch (e) {
         console.error('Download error:', e);
         throw e;
       }
-      return;
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [user, state.baseURL, appService, libraryLoaded],
+  );
+
+  const handleStream = useCallback(
+    async (href: string, count: number, title: string, author: string) => {
+      if (!appService || !libraryLoaded) return;
+      try {
+        const url = resolveURL(href, state.baseURL);
+        const psePath = buildPseStreamFileName({ url, catalogId, count, title, author });
+        const { library, setLibrary } = useLibraryStore.getState();
+        const book = await appService.importBook(psePath, library, { transient: true });
+        if (book) {
+          setLibrary(library);
+          navigateToReader(router, [book.hash]);
+        }
+      } catch (e) {
+        console.error('Stream error:', e);
+        eventDispatcher.dispatch('toast', {
+          type: 'error',
+          message: _('Failed to start stream') + `:\n${e instanceof Error ? e.message : e}`,
+        });
+      }
+    },
+    [state.baseURL, catalogId, appService, libraryLoaded, router, _],
   );
 
   const handleGenerateCachedImageUrl = useCallback(
@@ -479,8 +534,9 @@ export default function BrowserPage() {
       if (!appService) return url;
       const username = usernameRef.current || '';
       const password = passwordRef.current || '';
-      if (!username && !password) {
-        return url;
+      const customHeaders = customHeadersRef.current;
+      if (!username && !password && Object.keys(customHeaders).length === 0) {
+        return needsProxy(url) ? getProxiedURL(url, '', true) : url;
       }
 
       const cachedKey = `img_${md5(url)}.png`;
@@ -490,13 +546,17 @@ export default function BrowserPage() {
         return await appService.getImageURL(cachedPath);
       } else {
         const useProxy = needsProxy(url);
-        let downloadUrl = useProxy ? getProxiedURL(url, '', true) : url;
-        const headers: Record<string, string> = {};
+        let downloadUrl = useProxy ? getProxiedURL(url, '', true, customHeaders) : url;
+        const headers: Record<string, string> = {
+          ...(!useProxy ? customHeaders : {}),
+        };
         if (username || password) {
-          const authHeader = await probeAuth(url, username, password, useProxy);
+          const authHeader = await probeAuth(url, username, password, useProxy, customHeaders);
           if (authHeader) {
-            headers['Authorization'] = authHeader;
-            downloadUrl = useProxy ? getProxiedURL(url, authHeader, true) : url;
+            if (!useProxy) {
+              headers['Authorization'] = authHeader;
+            }
+            downloadUrl = useProxy ? getProxiedURL(url, authHeader, true, customHeaders) : url;
           }
         }
         await downloadFile({
@@ -646,6 +706,7 @@ export default function BrowserPage() {
             publication={publication}
             baseURL={state.baseURL}
             onDownload={handleDownload}
+            onStream={handleStream}
             resolveURL={resolveURL}
             onGenerateCachedImageUrl={handleGenerateCachedImageUrl}
           />
