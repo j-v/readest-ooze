@@ -101,7 +101,7 @@ export class TTSController extends EventTarget {
     if (voiceId) this.#voiceId = voiceId;
 
     // Check if offline audio is available BEFORE initializing any online clients
-    if (bookHash && sectionHref && voiceId) {
+    if (bookHash && sectionHref) {
       try {
         if (!this.ttsOfflineClient.setContext) {
           console.warn('Offline TTS client does not support setContext');
