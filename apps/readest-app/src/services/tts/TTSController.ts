@@ -106,7 +106,7 @@ export class TTSController extends EventTarget {
         if (!this.ttsOfflineClient.setContext) {
           console.warn('Offline TTS client does not support setContext');
         } else {
-          this.ttsOfflineClient.setContext(bookHash, sectionHref, voiceId, lang);
+          this.ttsOfflineClient.setContext(bookHash, sectionHref, voiceId ?? '', lang);
           const hasOfflineAudio = await (
             this.ttsOfflineClient as OfflineTTSClient
           ).hasOfflineAudio();
@@ -115,6 +115,7 @@ export class TTSController extends EventTarget {
             // Offline audio is available - skip all online initialization!
             this.ttsClient = this.ttsOfflineClient;
             await this.ttsClient.setRate(this.ttsRate);
+            this.dispatchClientChange();
             console.log('Using offline TTS - skipping online client initialization');
             return;
           }
