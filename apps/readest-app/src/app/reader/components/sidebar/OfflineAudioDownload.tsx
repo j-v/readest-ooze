@@ -13,6 +13,13 @@ import { useBookLanguage } from '@/hooks/useBookLanguage';
 import { TOCItem } from '@/libs/document';
 import { useLongPress } from '@/hooks/useLongPress';
 
+const isTocItemDownloaded = (downloadedHrefs: Set<string>, tocHref: string): boolean => {
+  if (!tocHref) return false;
+  if (downloadedHrefs.has(tocHref)) return true;
+  const baseHref = tocHref.split('#')[0] || tocHref;
+  return tocHref !== baseHref && downloadedHrefs.has(baseHref);
+};
+
 interface OfflineAudioDownloadProps {
   bookKey: string;
   onClose?: () => void;
@@ -392,7 +399,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
 
     const unread = flatTOC
       .slice(currentIndex)
-      .filter((x) => !downloadedHrefs.has(x.item.href || ''))
+      .filter((x) => !isTocItemDownloaded(downloadedHrefs, x.item.href || ''))
       .map((x) => x.item.href || '');
     setSelection(new Set(unread));
     setPivotIndex(null);
@@ -425,7 +432,11 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
     setIsDownloading(true);
 
     const selectedItems = flatTOC
-      .filter((x) => selection.has(x.item.href || '') && !downloadedHrefs.has(x.item.href || ''))
+      .filter(
+        (x) =>
+          selection.has(x.item.href || '') &&
+          !isTocItemDownloaded(downloadedHrefs, x.item.href || ''),
+      )
       .map((x) => x.item);
 
     setDownloadProgress({
@@ -479,7 +490,9 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
 
   const handleDeleteSelected = async () => {
     if (isDownloading) return;
-    const toDelete = Array.from(selection).filter((href) => downloadedHrefs.has(href));
+    const toDelete = Array.from(selection).filter((href) =>
+      isTocItemDownloaded(downloadedHrefs, href),
+    );
     if (toDelete.length === 0) return;
 
     setIsDownloading(true);
@@ -515,11 +528,19 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
   const voiceDropdownRef = useRef<HTMLDetailsElement>(null);
 
   const isSelectionEmpty = selection.size === 0;
-  const hasMissingInSelection = Array.from(selection).some((h) => !downloadedHrefs.has(h));
-  const hasDownloadedInSelection = Array.from(selection).some((h) => downloadedHrefs.has(h));
+  const hasMissingInSelection = Array.from(selection).some(
+    (h) => !isTocItemDownloaded(downloadedHrefs, h),
+  );
+  const hasDownloadedInSelection = Array.from(selection).some((h) =>
+    isTocItemDownloaded(downloadedHrefs, h),
+  );
 
-  const downloadCount = Array.from(selection).filter((h) => !downloadedHrefs.has(h)).length;
-  const deleteCount = Array.from(selection).filter((h) => downloadedHrefs.has(h)).length;
+  const downloadCount = Array.from(selection).filter(
+    (h) => !isTocItemDownloaded(downloadedHrefs, h),
+  ).length;
+  const deleteCount = Array.from(selection).filter((h) =>
+    isTocItemDownloaded(downloadedHrefs, h),
+  ).length;
 
   return (
     <div className='bg-base-100 border-base-200 flex h-[80vh] max-h-[600px] w-full max-w-md flex-col rounded-lg border shadow-lg'>
@@ -538,7 +559,11 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
 
         <div className='mb-2 flex items-center justify-between text-xs opacity-70'>
           <span>
-            {downloadedHrefs.size} / {flatTOC.length} {_('Downloaded')} ({formatSize(totalSize)})
+            {
+              flatTOC.filter(({ item }) => isTocItemDownloaded(downloadedHrefs, item.href || ''))
+                .length
+            }{' '}
+            / {flatTOC.length} {_('Downloaded')} ({formatSize(totalSize)})
           </span>
         </div>
 
@@ -617,7 +642,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
               depth={depth}
               index={index}
               isSelected={selection.size === 0 ? false : selection.has(item.href || '')}
-              isDownloaded={downloadedHrefs.has(item.href || '')}
+              isDownloaded={isTocItemDownloaded(downloadedHrefs, item.href || '')}
               isActive={downloadingHref === item.href}
               isCurrent={currentSectionHref === item.href}
               isDownloading={isDownloading}

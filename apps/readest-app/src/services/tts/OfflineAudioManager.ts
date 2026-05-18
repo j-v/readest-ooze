@@ -3,7 +3,7 @@
  * Uses Foliate TTS for SSML generation to ensure parity with online TTS highlighting.
  */
 
-import { TOCItem, BookDoc } from '@/libs/document';
+import { TOCItem, BookDoc, SectionItem } from '@/libs/document';
 import { offlineAudioStorage, DownloadProgress, MarkTimingInfo } from './OfflineAudioStorage';
 import TTSProvider from './providers/TTSProvider';
 import EdgeTTSProvider from './providers/EdgeTTSProvider';
@@ -320,29 +320,90 @@ class OfflineAudioManager extends EventTarget {
     }
 
     try {
-      const allSections = sections;
-      const totalSections = allSections.length;
+      // Step 1: Build a Set of section IDs that have TOC entries (from ALL TOC items,
+      // not just the selected ones). We need this to know when to stop walking forward
+      // — sections that belong to the NEXT TOC entry must act as boundaries even if
+      // that TOC item wasn't selected for download.
+      const tocSectionIds = new Set<string>();
+      const collectTocSectionIds = (items: TOCItem[]) => {
+        for (const item of items) {
+          const href = item.href || '';
+          const sectionId = href.split('#')[0] || href;
+          if (sectionId) tocSectionIds.add(sectionId);
+          if (item.subitems) collectTocSectionIds(item.subitems);
+        }
+      };
+      if (bookDoc.toc) collectTocSectionIds(bookDoc.toc);
 
-      // Check existing downloads first using COMPLETION_STORE (much efficient)
+      // Step 2: Expand each selected TOC item into its spine sections.
+      // Each TOC item maps to one primary spine section (the one matching its href).
+      // It may also "own" consecutive orphan sections (spine items with no TOC entry).
+      //
+      // We produce a "download plan": an ordered list of (tocItem, spineSection[]) pairs.
+      const downloadPlan: Array<{
+        tocItem: TOCItem;
+        spineSections: string[];
+      }> = [];
+
+      for (const tocItem of sections) {
+        const tocHref = tocItem.href || '';
+        if (!tocHref) continue;
+
+        const baseSectionId = tocHref.split('#')[0] || tocHref;
+
+        // Find the spine section index matching this TOC item
+        const startIndex = bookDoc.sections.findIndex((s: SectionItem) => s.id === baseSectionId);
+        if (startIndex < 0) continue;
+
+        // Collect this section and any orphan sections after it
+        const spineIds: string[] = [];
+        for (let i = startIndex; i < bookDoc.sections.length; i++) {
+          const sectionId = bookDoc.sections[i]!.id;
+          if (i > startIndex && tocSectionIds.has(sectionId)) {
+            break; // next TOC entry starts here, stop
+          }
+          spineIds.push(sectionId);
+        }
+
+        downloadPlan.push({ tocItem, spineSections: spineIds });
+      }
+
+      console.log('[OfflineAudioManager] Download plan:', {
+        tocItemCount: sections.length,
+        totalSpineSections: downloadPlan.reduce((s, e) => s + e.spineSections.length, 0),
+        plan: downloadPlan.map((e) => ({
+          tocLabel: e.tocItem.label,
+          tocHref: e.tocItem.href,
+          spineSections: e.spineSections,
+        })),
+      });
+
+      // Check existing downloads first using COMPLETION_STORE
       const existingDownloads = await offlineAudioStorage.getAllDownloadedSections(bookHash);
 
       // Initialize progress
-      // Note: This resets the "Book Progress" to this batch.
-      // This is acceptable as described in the plan.
+      // totalSections now counts spine sections (including orphans),
+      // but sectionHrefs keeps TOC hrefs for selection restoration.
+      const totalSpineSections = downloadPlan.reduce(
+        (sum, entry) => sum + entry.spineSections.length,
+        0,
+      );
       const progress: DownloadProgress = {
         bookHash,
-        totalSections,
-        downloadedSections: 0, // We will count pre-existing in this batch as "done" but we iterate to find them
+        totalSections: totalSpineSections,
+        downloadedSections: 0,
         failedSections: [],
         inProgress: true,
         sectionHrefs: sections.map((s) => s.href || '').filter(Boolean),
         startedAt: Date.now(),
       };
 
-      // Count already downloaded in this batch for initial progress
-      for (const section of allSections) {
-        if (existingDownloads.has(section.href || '')) {
-          progress.downloadedSections++;
+      // Count already downloaded spine sections for initial progress
+      for (const entry of downloadPlan) {
+        for (const sectionId of entry.spineSections) {
+          if (existingDownloads.has(sectionId)) {
+            progress.downloadedSections++;
+          }
         }
       }
 
@@ -351,114 +412,124 @@ class OfflineAudioManager extends EventTarget {
 
       let sectionsCompletedCount = progress.downloadedSections;
 
-      // Download each section
-      for (let i = 0; i < allSections.length; i++) {
+      // Download each spine section across all TOC items' plans
+      for (const entry of downloadPlan) {
         if (abortController.signal.aborted) {
-          // Break the loop on abort
           break;
         }
 
-        const section = allSections[i]!;
-        const { href, label } = section;
-        if (!href) continue;
+        const { tocItem, spineSections: spineIds } = entry;
+        const { label } = tocItem;
 
-        try {
-          // Skip if already downloaded
-          if (existingDownloads.has(href)) {
-            // Already counted in initial progress
-            continue;
+        for (const sectionId of spineIds) {
+          if (abortController.signal.aborted) {
+            break;
           }
 
-          const lang = targetLang || primaryLang;
-          const granularity: TTSGranularity = 'sentence'; // Use sentence granularity for offline audio
+          // Skip if already downloaded
+          if (existingDownloads.has(sectionId)) continue;
 
-          // Use Foliate TTS to generate SSML chunks for exact parity with online TTS
-          const ssmlChunks = await generateSSMLChunksForSection(bookDoc, href, granularity);
+          try {
+            const lang = targetLang || primaryLang;
+            const granularity: TTSGranularity = 'sentence';
 
-          if (ssmlChunks.length > 0) {
+            // Generate SSML from the spine section's document using the clean section ID
+            const ssmlChunks = await generateSSMLChunksForSection(bookDoc, sectionId, granularity);
+
+            if (ssmlChunks.length > 0) {
+              console.log('[OfflineAudioManager] Downloading section', {
+                tocLabel: label,
+                tocHref: tocItem.href,
+                sectionId,
+                spineSectionsInPlan: spineIds,
+                totalSectionsInBook: bookDoc.sections.length,
+                voiceId,
+                lang,
+              });
+
+              this.dispatchEvent(
+                new CustomEvent('section-download-start', {
+                  detail: { bookHash, href: sectionId },
+                }),
+              );
+
+              await this.downloadSectionWithFoliateTTS(
+                bookHash,
+                sectionId,
+                ssmlChunks,
+                voiceId,
+                lang,
+                rate,
+                pitch,
+                granularity,
+                targetLang,
+                (downloaded, total) => {
+                  if (abortController.signal.aborted) return;
+                  const fraction = total > 0 ? downloaded / total : 0;
+                  progress.downloadedSections = sectionsCompletedCount + fraction;
+                  this.dispatchEvent(
+                    new CustomEvent('download-progress', {
+                      detail: {
+                        bookHash,
+                        current: progress.downloadedSections,
+                        total: totalSpineSections,
+                        href: tocItem.href || sectionId,
+                        label: label || sectionId,
+                      },
+                    }),
+                  );
+                  onProgress?.(progress);
+                },
+                abortController.signal,
+              );
+            }
+
+            sectionsCompletedCount++;
+            progress.downloadedSections = sectionsCompletedCount;
+            await offlineAudioStorage.saveProgress(progress);
+            onProgress?.(progress);
+
+            // Dispatch section complete event for UI updates
             this.dispatchEvent(
-              new CustomEvent('section-download-start', {
-                detail: { bookHash, href },
+              new CustomEvent('section-download-complete', {
+                detail: { bookHash, href: sectionId },
               }),
             );
-            await this.downloadSectionWithFoliateTTS(
-              bookHash,
-              href,
-              ssmlChunks,
-              voiceId,
-              lang,
-              rate,
-              pitch,
-              granularity,
-              targetLang,
-              (downloaded, total) => {
-                if (abortController.signal.aborted) return;
-                const fraction = total > 0 ? downloaded / total : 0;
-                progress.downloadedSections = sectionsCompletedCount + fraction;
-                // Emit event but don't save to DB for every chunk to avoid perf hit
-                this.dispatchEvent(
-                  new CustomEvent('download-progress', {
-                    detail: {
-                      bookHash,
-                      current: progress.downloadedSections,
-                      total: totalSections,
-                      href,
-                      label: label || href,
-                    },
-                  }),
-                );
-                onProgress?.(progress);
-              },
-              abortController.signal,
+
+            this.dispatchEvent(
+              new CustomEvent('download-progress', {
+                detail: {
+                  bookHash,
+                  current: progress.downloadedSections,
+                  total: totalSpineSections,
+                  href: tocItem.href || sectionId,
+                  label: label || sectionId,
+                },
+              }),
             );
+          } catch (error) {
+            if (
+              abortController.signal.aborted ||
+              (error instanceof Error && error.message === 'Download cancelled')
+            ) {
+              throw error;
+            }
+
+            console.error('Error downloading section:', sectionId, error);
+            this.dispatchEvent(
+              new CustomEvent('section-download-error', {
+                detail: {
+                  bookHash,
+                  href: sectionId,
+                  error: error instanceof Error ? error.message : String(error),
+                },
+              }),
+            );
+            progress.failedSections.push(sectionId);
+            progress.lastError = error instanceof Error ? error.message : String(error);
+            await offlineAudioStorage.saveProgress(progress);
+            onProgress?.(progress);
           }
-
-          sectionsCompletedCount++;
-          progress.downloadedSections = sectionsCompletedCount;
-          await offlineAudioStorage.saveProgress(progress);
-          onProgress?.(progress);
-
-          // Dispatch section complete event for UI updates
-          this.dispatchEvent(
-            new CustomEvent('section-download-complete', {
-              detail: { bookHash, href },
-            }),
-          );
-
-          this.dispatchEvent(
-            new CustomEvent('download-progress', {
-              detail: {
-                bookHash,
-                current: progress.downloadedSections,
-                total: totalSections,
-                href,
-                label: label || href,
-              },
-            }),
-          );
-        } catch (error) {
-          // If aborted, rethrow or break?
-          if (
-            abortController.signal.aborted ||
-            (error instanceof Error && error.message === 'Download cancelled')
-          ) {
-            throw error; // Propagate abort
-          }
-
-          console.error('Error downloading section:', href, error);
-          this.dispatchEvent(
-            new CustomEvent('section-download-error', {
-              detail: {
-                bookHash,
-                href,
-                error: error instanceof Error ? error.message : String(error),
-              },
-            }),
-          );
-          progress.failedSections.push(href);
-          progress.lastError = error instanceof Error ? error.message : String(error);
-          await offlineAudioStorage.saveProgress(progress);
-          onProgress?.(progress);
         }
       }
 

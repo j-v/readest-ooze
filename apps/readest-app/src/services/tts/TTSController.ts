@@ -56,6 +56,7 @@ export class TTSController extends EventTarget {
   // Context tracking for offline TTS
   #bookHash: string = '';
   #lastSectionHref: string = '';
+  #lastContentIndex: number = -1;
   #voiceId: string = '';
 
   options: TTSHighlightOptions = { style: 'highlight', color: 'gray' };
@@ -249,8 +250,19 @@ export class TTSController extends EventTarget {
       return true;
     }
 
+    // When TTS auto-advances to the next spine section, the renderer's
+    // content index may still point to the previous section (hasn't caught
+    // up yet). Don't revert the offline context in that case — the
+    // correct context was already set by #initTTSForSection.
+    if (typeof contentIndex === 'number' && contentIndex === this.#lastContentIndex - 1) {
+      return true;
+    }
+
     const prevHref = this.#lastSectionHref;
     this.#lastSectionHref = currentHref;
+    if (typeof contentIndex === 'number') {
+      this.#lastContentIndex = contentIndex;
+    }
 
     console.log('[TTSController] Section transition detected:', {
       from: prevHref,
@@ -374,6 +386,7 @@ export class TTSController extends EventTarget {
       const newHref = section.id || '';
       if (newHref && newHref !== this.#lastSectionHref) {
         this.#lastSectionHref = newHref;
+        this.#lastContentIndex = sectionIndex;
         this.ttsOfflineClient.setContext(this.#bookHash, newHref, this.#voiceId, this.ttsLang);
         const hasAudio = await (this.ttsOfflineClient as OfflineTTSClient).hasOfflineAudio();
         if (!hasAudio) {
