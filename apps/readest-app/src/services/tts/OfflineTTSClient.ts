@@ -178,11 +178,16 @@ export class OfflineTTSClient implements TTSClient {
       });
 
       const hasAudio = sectionAudio.length > 0;
+      const hrefRange =
+        sectionAudio.length > 0
+          ? { first: sectionAudio[0]?.href, last: sectionAudio[sectionAudio.length - 1]?.href }
+          : undefined;
       console.log('[OfflineTTSClient] hasOfflineAudio check:', {
         bookHash: this.#bookHash,
         sectionHref: this.#sectionHref,
         voiceId: this.#voiceId,
         chunksAvailable: sectionAudio.length,
+        hrefRange,
         hasAudio,
       });
 
@@ -225,6 +230,16 @@ export class OfflineTTSClient implements TTSClient {
     const plainText = this.normalizeWhitespace(rawPlainText);
 
     const contentHash = simpleHash(plainText);
+
+    if (marks.length > 0) {
+      console.debug('[OfflineTTSClient] Looking up chunk for block', {
+        sectionHref: this.#sectionHref,
+        blockIndex: marks[0]?.name,
+        contentHash,
+        textPreview: plainText.substring(0, 40),
+      });
+    }
+
     const audioChunk = await this.findAudioChunkByContent(contentHash, plainText);
 
     if (!audioChunk) {
@@ -399,10 +414,36 @@ export class OfflineTTSClient implements TTSClient {
         }
       }
 
+      const storedPreviews = validAudio.slice(0, 5).map((r) => ({
+        hash: simpleHash(this.normalizeWhitespace(r.text)),
+        text: r.text.substring(0, 80),
+        href: r.href,
+      }));
+
+      const expectedLower = plainText.toLowerCase().trim();
+      const partialMatch = validAudio
+        .slice(0, 10)
+        .find((r) =>
+          this.normalizeWhitespace(r.text).toLowerCase().includes(expectedLower.substring(0, 20)),
+        );
+
+      const anyContains = validAudio
+        .slice(0, 20)
+        .some((r) => this.normalizeWhitespace(r.text).toLowerCase().includes(expectedLower));
+
       console.warn('[OfflineTTSClient] No matching audio chunk found for content:', {
         contentHash,
-        textPreview: plainText.substring(0, 50),
+        expectedText: plainText,
         availableChunks: validAudio.length,
+        anyChunkContainsFullText: anyContains,
+        partialChunkMatch: partialMatch
+          ? {
+              hash: simpleHash(this.normalizeWhitespace(partialMatch.text)),
+              text: partialMatch.text.substring(0, 80),
+              href: partialMatch.href,
+            }
+          : null,
+        firstStoredChunks: storedPreviews,
       });
 
       return null;

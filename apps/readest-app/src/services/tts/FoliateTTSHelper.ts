@@ -9,20 +9,20 @@ import { TTSGranularity } from './types';
 
 // copied from foliate-js
 const NS = {
-    XML: 'http://www.w3.org/XML/1998/namespace',
-    SSML: 'http://www.w3.org/2001/10/synthesis',
-}
+  XML: 'http://www.w3.org/XML/1998/namespace',
+  SSML: 'http://www.w3.org/2001/10/synthesis',
+};
 
 const setLangIfMissing = (el: Element, lang: string) => {
-    const langAttr = (el as HTMLElement).lang || el?.getAttributeNS?.(NS.XML, 'lang');
-    if (!langAttr) {
-        if (el.parentElement) {
-            setLangIfMissing(el.parentElement, lang);
-        } else {
-            el.setAttributeNS(NS.XML, 'lang', lang);
-        }
+  const langAttr = (el as HTMLElement).lang || el?.getAttributeNS?.(NS.XML, 'lang');
+  if (!langAttr) {
+    if (el.parentElement) {
+      setLangIfMissing(el.parentElement, lang);
+    } else {
+      el.setAttributeNS(NS.XML, 'lang', lang);
     }
-}
+  }
+};
 
 /**
  * Result from generating SSML for a section
@@ -49,10 +49,11 @@ export async function generateSSMLChunksFromDocument(
   const { TTS } = await import('foliate-js/tts.js');
   const { textWalker } = await import('foliate-js/text-walker.js');
 
-  // Create the standard node filter (same as TTSController uses)
+  // Create the standard node filter (must match TTSController.#initTTSForSection)
   const nodeFilter = createRejectFilter({
-    tags: ['rt', 'sup'],
-    contents: [{ tag: 'a', content: /^\d+$/ }],
+    tags: ['rt', 'canvas', 'br'],
+    classes: ['annotationLayer'],
+    contents: [{ tag: 'a', content: /^[\[\(]?[\*\d]+[\)\]]?$/ }],
   });
 
   // No-op highlighter since we're doing offline generation
@@ -101,6 +102,11 @@ export async function loadSectionDocument(
 
   try {
     const doc = await section.createDocument();
+    console.log('[FoliateTTSHelper] Loaded section document:', {
+      requestedHref: href,
+      matchedSectionId: section.id,
+      docTitle: doc.title || doc.querySelector('title')?.textContent || '(no title)',
+    });
     const language = bookDoc.metadata.language;
     const bookLang = Array.isArray(language) ? language[0]! : language;
     setLangIfMissing(doc.documentElement, bookLang);

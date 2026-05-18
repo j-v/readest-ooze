@@ -249,7 +249,14 @@ export class TTSController extends EventTarget {
       return true;
     }
 
+    const prevHref = this.#lastSectionHref;
     this.#lastSectionHref = currentHref;
+
+    console.log('[TTSController] Section transition detected:', {
+      from: prevHref,
+      to: currentHref,
+      contentIndex,
+    });
 
     this.ttsOfflineClient.setContext(this.#bookHash, currentHref, this.#voiceId, this.ttsLang);
 
@@ -261,6 +268,7 @@ export class TTSController extends EventTarget {
       return false;
     }
 
+    console.log('[TTSController] Offline audio available for new section');
     return true;
   }
 
@@ -316,10 +324,13 @@ export class TTSController extends EventTarget {
     }
 
     let doc: Document;
+    let docSource: 'rendered' | 'fresh';
     if (currentSection?.index === sectionIndex && currentSection?.doc) {
       doc = currentSection.doc;
+      docSource = 'rendered';
     } else {
       doc = await section.createDocument();
+      docSource = 'fresh';
       const html = doc.querySelector('html');
       const lang = html?.getAttribute('lang') || html?.getAttribute('xml:lang') || '';
       if (html && !isValidLang(lang) && this.ttsLang) {
@@ -351,7 +362,26 @@ export class TTSController extends EventTarget {
       this.#getHighlighter(),
       granularity,
     );
-    console.log(`[TTS] Initialized TTS for section ${sectionIndex}`);
+    console.log(`[TTS] Initialized TTS for section ${sectionIndex}`, {
+      sectionId: section.id,
+      docSource,
+      granularity,
+    });
+
+    // Update offline context using the actual section id (not the renderer's content index,
+    // which may lag behind when TTS auto-advances between sections).
+    if (this.ttsClient.name === 'offline-tts' && this.ttsOfflineClient.setContext) {
+      const newHref = section.id || '';
+      if (newHref && newHref !== this.#lastSectionHref) {
+        this.#lastSectionHref = newHref;
+        this.ttsOfflineClient.setContext(this.#bookHash, newHref, this.#voiceId, this.ttsLang);
+        const hasAudio = await (this.ttsOfflineClient as OfflineTTSClient).hasOfflineAudio();
+        if (!hasAudio) {
+          console.log('[TTSController] No offline audio for section, switching to online');
+          await this.disableOfflineAudio();
+        }
+      }
+    }
 
     return true;
   }

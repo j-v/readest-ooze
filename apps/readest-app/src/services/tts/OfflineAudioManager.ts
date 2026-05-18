@@ -81,11 +81,8 @@ class OfflineAudioManager extends EventTarget {
    * This ensures stored audio matches what TTSController will request during playback.
    */
   private preprocessSSML(ssml: string, targetLang?: string): string {
-    // First normalize whitespace within SSML content (collapse newlines/spaces)
-    // This must happen before other transformations to ensure consistent text extraction
-    ssml = ssml.replace(/\s+/g, ' ');
-
     // Apply same transformations as TTSController#preprocessSSML
+    // Note: whitespace normalization is done by normalizeWhitespace() after parseSSMLMarks()
     ssml = ssml
       .replace(/<emphasis[^>]*>([^<]+)<\/emphasis>/g, '$1')
       .replace(/[\u2013\u2014]/g, ',')
