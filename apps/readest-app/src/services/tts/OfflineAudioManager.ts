@@ -42,6 +42,7 @@ class OfflineAudioManager extends EventTarget {
   private edgeProvider: EdgeTTSProvider;
   private httpProvider: HttpTTSProvider;
   private activeDownloads = new Map<string, AbortController>();
+  private downloadWakeLock: WakeLockSentinel | null = null;
 
   constructor() {
     super();
@@ -324,6 +325,18 @@ class OfflineAudioManager extends EventTarget {
     }
 
     try {
+      // Prevent screen sleep during download
+      if ('wakeLock' in navigator) {
+        try {
+          this.downloadWakeLock = await navigator.wakeLock.request('screen');
+          this.downloadWakeLock?.addEventListener('release', () => {
+            this.downloadWakeLock = null;
+          });
+        } catch {
+          // wake lock not available, proceed without it
+        }
+      }
+
       // Step 1: Build a Set of section IDs that have TOC entries (from ALL TOC items,
       // not just the selected ones). We need this to know when to stop walking forward
       // — sections that belong to the NEXT TOC entry must act as boundaries even if
@@ -669,6 +682,15 @@ class OfflineAudioManager extends EventTarget {
 
       throw error;
     } finally {
+      if (this.downloadWakeLock) {
+        try {
+          await this.downloadWakeLock.release();
+        } catch {
+          // ignore release errors
+        }
+        this.downloadWakeLock = null;
+      }
+
       // Cleanup only if we created it? Or if we finished?
       // Since we set it in activeDownloads, we should clean it up.
       // But only if we are the one who finished it.
