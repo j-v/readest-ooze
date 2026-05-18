@@ -738,15 +738,18 @@ class OfflineAudioManager extends EventTarget {
    * Delete downloaded audio for a single section
    */
   async deleteSingleSection(bookHash: string, href: string, voiceId: string): Promise<void> {
+    // Strip fragment — completions and chunk hrefs are stored with clean section IDs
+    const sectionId = href.split('#')[0] || href;
+
     // Delete all chunks efficiently using range query
-    await offlineAudioStorage.deleteAudioForSection(bookHash, href, voiceId);
+    await offlineAudioStorage.deleteAudioForSection(bookHash, sectionId, voiceId);
 
     // Delete completion status
-    await offlineAudioStorage.deleteSectionCompletion(bookHash, href, voiceId);
+    await offlineAudioStorage.deleteSectionCompletion(bookHash, sectionId, voiceId);
 
     this.dispatchEvent(
       new CustomEvent('section-download-deleted', {
-        detail: { bookHash, href },
+        detail: { bookHash, href: sectionId },
       }),
     );
   }
