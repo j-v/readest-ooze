@@ -31,7 +31,7 @@ const nextConfig = {
   assetPrefix: '',
   reactStrictMode: true,
   serverExternalPackages: ['isows'],
-  allowedDevOrigins: ['192.168.2.120'],
+  allowedDevOrigins: ['jons-mac-mini.sardine-penny.ts.net'],
   webpack: (config) => {
     config.resolve.alias = {
       ...config.resolve.alias,

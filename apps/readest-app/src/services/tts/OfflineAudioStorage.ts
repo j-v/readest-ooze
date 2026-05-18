@@ -526,6 +526,37 @@ class OfflineAudioStorage {
     });
   }
 
+  /**
+   * Get all section IDs that have audio chunks stored, including boundary sections
+   * that were downloaded without a completion marker. Merges results from
+   * COMPLETION_STORE (fast markers) and AUDIO_STORE (chunks from boundary sections).
+   * Uses a key-only cursor on the audio store for efficiency.
+   */
+  async getAllSectionIdsWithAudio(bookHash: string): Promise<Set<string>> {
+    const sections = await this.getAllDownloadedSections(bookHash);
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([AUDIO_STORE], 'readonly');
+      const store = transaction.objectStore(AUDIO_STORE);
+      const index = store.index('bookHash_href');
+      const range = IDBKeyRange.bound([bookHash, ''], [bookHash, '\uffff']);
+      const request = index.openKeyCursor(range);
+
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (cursor) {
+          const [, href] = cursor.primaryKey as [string, string];
+          const baseHref = href.split('#block-')[0] || href;
+          sections.add(baseHref);
+          cursor.continue();
+        } else {
+          resolve(sections);
+        }
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+
   async deleteSectionCompletion(bookHash: string, href: string, voiceId: string): Promise<void> {
     if (!this.db) await this.init();
 

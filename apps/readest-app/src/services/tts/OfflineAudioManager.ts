@@ -145,6 +145,7 @@ class OfflineAudioManager extends EventTarget {
     targetLang?: string,
     onProgress?: (downloaded: number, total: number) => void,
     signal?: AbortSignal,
+    skipCompletion?: boolean,
   ): Promise<void> {
     const allMarkMetadata: MarkTimingInfo[] = [];
     let cumulativeAudioOffset = 0;
@@ -274,8 +275,11 @@ class OfflineAudioManager extends EventTarget {
       createdAt: Date.now(),
     });
 
-    // Mark section as complete
-    await offlineAudioStorage.markSectionComplete(bookHash, href, voiceId, ssmlChunks.length);
+    // Mark section as complete (skip for boundary sections — the completion
+    // will be added when the owning TOC entry is explicitly downloaded)
+    if (!skipCompletion) {
+      await offlineAudioStorage.markSectionComplete(bookHash, href, voiceId, ssmlChunks.length);
+    }
   }
 
   /**
@@ -325,24 +329,50 @@ class OfflineAudioManager extends EventTarget {
       // — sections that belong to the NEXT TOC entry must act as boundaries even if
       // that TOC item wasn't selected for download.
       const tocSectionIds = new Set<string>();
+      const tocFragmentBoundaries = new Set<string>();
       const collectTocSectionIds = (items: TOCItem[]) => {
         for (const item of items) {
           const href = item.href || '';
-          const sectionId = href.split('#')[0] || href;
-          if (sectionId) tocSectionIds.add(sectionId);
+          const [baseId, fragment] = href.split('#');
+          const sectionId = baseId || href;
+          if (sectionId) {
+            tocSectionIds.add(sectionId);
+            if (fragment) tocFragmentBoundaries.add(sectionId);
+          }
           if (item.subitems) collectTocSectionIds(item.subitems);
         }
       };
       if (bookDoc.toc) collectTocSectionIds(bookDoc.toc);
+
+      // Log all spine sections and TOC entry boundaries for debugging
+      console.log(
+        '[OfflineAudioManager] All spine sections:',
+        bookDoc.sections.map((s, i) => ({
+          index: i,
+          id: s.id,
+          hasTocEntry: tocSectionIds.has(s.id),
+        })),
+      );
+      console.log('[OfflineAudioManager] TOC section IDs (boundaries):', {
+        all: Array.from(tocSectionIds),
+        withFragment: Array.from(tocFragmentBoundaries),
+      });
 
       // Step 2: Expand each selected TOC item into its spine sections.
       // Each TOC item maps to one primary spine section (the one matching its href).
       // It may also "own" consecutive orphan sections (spine items with no TOC entry).
       //
       // We produce a "download plan": an ordered list of (tocItem, spineSection[]) pairs.
+      // Each spine section is tagged with isBoundary — true when the section has its own TOC
+      // entry (next chapter boundary). Boundary sections are downloaded for audio availability
+      // but NOT marked complete; the completion is added when the owning TOC entry is downloaded.
+      interface PlanSection {
+        id: string;
+        isBoundary: boolean;
+      }
       const downloadPlan: Array<{
         tocItem: TOCItem;
-        spineSections: string[];
+        spineSections: PlanSection[];
       }> = [];
 
       for (const tocItem of sections) {
@@ -353,16 +383,54 @@ class OfflineAudioManager extends EventTarget {
 
         // Find the spine section index matching this TOC item
         const startIndex = bookDoc.sections.findIndex((s: SectionItem) => s.id === baseSectionId);
-        if (startIndex < 0) continue;
+        if (startIndex < 0) {
+          console.log('[OfflineAudioManager] TOC item not found in spine sections:', {
+            tocLabel: tocItem.label,
+            tocHref,
+            baseSectionId,
+          });
+          continue;
+        }
 
-        // Collect this section and any orphan sections after it
-        const spineIds: string[] = [];
+        console.log('[OfflineAudioManager] Walking forward from spine section:', {
+          tocLabel: tocItem.label,
+          tocHref,
+          baseSectionId,
+          startIndex,
+        });
+
+        // Collect this section and any orphan sections after it.
+        // When we encounter the next TOC entry's spine section:
+        //   - If its TOC href has a fragment (e.g. h-4.xhtml#part3), the
+        //     section overlaps both chapters. Include it as a boundary
+        //     (download audio, skip completion marker).
+        //   - If its TOC href has no fragment (e.g. h-4.xhtml), the next
+        //     chapter starts cleanly at the top — no overlap. Skip it.
+        const spineIds: PlanSection[] = [];
         for (let i = startIndex; i < bookDoc.sections.length; i++) {
           const sectionId = bookDoc.sections[i]!.id;
-          if (i > startIndex && tocSectionIds.has(sectionId)) {
-            break; // next TOC entry starts here, stop
+          const isOwnSectionBoundary = i > startIndex && tocSectionIds.has(sectionId);
+          const isOverlapBoundary = isOwnSectionBoundary && tocFragmentBoundaries.has(sectionId);
+
+          if (isOwnSectionBoundary && !isOverlapBoundary) {
+            console.log('[OfflineAudioManager] Spine section walk:', {
+              i,
+              sectionId,
+              action: 'BREAK — clean boundary, no overlap',
+            });
+            break;
           }
-          spineIds.push(sectionId);
+          spineIds.push({
+            id: sectionId,
+            isBoundary: isOverlapBoundary,
+          });
+          console.log(
+            '[OfflineAudioManager] Spine section walk:',
+            isOverlapBoundary
+              ? { i, sectionId, action: 'include and BREAK — overlapping boundary' }
+              : { i, sectionId, action: 'include' },
+          );
+          if (isOverlapBoundary) break;
         }
 
         downloadPlan.push({ tocItem, spineSections: spineIds });
@@ -374,12 +442,16 @@ class OfflineAudioManager extends EventTarget {
         plan: downloadPlan.map((e) => ({
           tocLabel: e.tocItem.label,
           tocHref: e.tocItem.href,
-          spineSections: e.spineSections,
+          spineSections: e.spineSections.map((s) => ({
+            id: s.id,
+            isBoundary: s.isBoundary,
+          })),
         })),
       });
 
-      // Check existing downloads first using COMPLETION_STORE
-      const existingDownloads = await offlineAudioStorage.getAllDownloadedSections(bookHash);
+      // Check existing downloads — combine COMPLETION_STORE markers with
+      // AUDIO_STORE chunks (boundary sections have audio but no marker).
+      const existingDownloads = await offlineAudioStorage.getAllSectionIdsWithAudio(bookHash);
 
       // Initialize progress
       // totalSections now counts spine sections (including orphans),
@@ -400,7 +472,7 @@ class OfflineAudioManager extends EventTarget {
 
       // Count already downloaded spine sections for initial progress
       for (const entry of downloadPlan) {
-        for (const sectionId of entry.spineSections) {
+        for (const { id: sectionId } of entry.spineSections) {
           if (existingDownloads.has(sectionId)) {
             progress.downloadedSections++;
           }
@@ -421,13 +493,21 @@ class OfflineAudioManager extends EventTarget {
         const { tocItem, spineSections: spineIds } = entry;
         const { label } = tocItem;
 
-        for (const sectionId of spineIds) {
+        for (const { id: sectionId, isBoundary } of spineIds) {
           if (abortController.signal.aborted) {
             break;
           }
 
           // Skip if already downloaded
-          if (existingDownloads.has(sectionId)) continue;
+          if (existingDownloads.has(sectionId)) {
+            // Audio exists but completion marker may be missing (e.g. section
+            // was first downloaded as a boundary for another TOC entry). If
+            // this is now an owned section, add the completion marker.
+            if (!isBoundary) {
+              await offlineAudioStorage.markSectionComplete(bookHash, sectionId, voiceId, 0);
+            }
+            continue;
+          }
 
           try {
             const lang = targetLang || primaryLang;
@@ -441,7 +521,8 @@ class OfflineAudioManager extends EventTarget {
                 tocLabel: label,
                 tocHref: tocItem.href,
                 sectionId,
-                spineSectionsInPlan: spineIds,
+                isBoundary,
+                spineSectionsInPlan: spineIds.map((s) => s.id),
                 totalSectionsInBook: bookDoc.sections.length,
                 voiceId,
                 lang,
@@ -481,20 +562,26 @@ class OfflineAudioManager extends EventTarget {
                   onProgress?.(progress);
                 },
                 abortController.signal,
+                isBoundary, // skipCompletion — boundary sections don't get marked complete
               );
             }
 
             sectionsCompletedCount++;
             progress.downloadedSections = sectionsCompletedCount;
+            existingDownloads.add(sectionId);
             await offlineAudioStorage.saveProgress(progress);
             onProgress?.(progress);
 
-            // Dispatch section complete event for UI updates
-            this.dispatchEvent(
-              new CustomEvent('section-download-complete', {
-                detail: { bookHash, href: sectionId },
-              }),
-            );
+            // Dispatch section complete event only for owned sections
+            // (boundary sections belong to a different TOC entry — don't
+            // let the UI prematurely show the next chapter as downloaded)
+            if (!isBoundary) {
+              this.dispatchEvent(
+                new CustomEvent('section-download-complete', {
+                  detail: { bookHash, href: sectionId },
+                }),
+              );
+            }
 
             this.dispatchEvent(
               new CustomEvent('download-progress', {
@@ -753,6 +840,14 @@ class OfflineAudioManager extends EventTarget {
    */
   async getAllDownloadedSections(bookHash: string): Promise<Set<string>> {
     return offlineAudioStorage.getAllDownloadedSections(bookHash);
+  }
+
+  /**
+   * Get all section IDs that have audio chunks stored, including boundary sections
+   * downloaded without completion markers. Merges COMPLETION_STORE and AUDIO_STORE results.
+   */
+  async getAllSectionIdsWithAudio(bookHash: string): Promise<Set<string>> {
+    return offlineAudioStorage.getAllSectionIdsWithAudio(bookHash);
   }
 
   /**
