@@ -14,7 +14,8 @@ import { TTSUtils } from './TTSUtils';
 import { parseSSMLMarks, filterSSMLWithLang } from '@/utils/ssml';
 import { getAudioDuration, simpleHash } from './utils';
 import { generateSSMLChunksForSection } from './FoliateTTSHelper';
-import { TTSGranularity, TTSVoicesGroup } from './types';
+import { runWithConcurrency } from '@/utils/concurrency';
+import { TTSGranularity, TTSMark, TTSVoicesGroup } from './types';
 import { getUserLocale } from '@/utils/misc';
 import { useSettingsStore } from '@/store/settingsStore';
 
@@ -133,6 +134,7 @@ class OfflineAudioManager extends EventTarget {
   /**
    * Download audio for a section using Foliate TTS-generated SSML chunks.
    * Each SSML chunk corresponds to a block/paragraph in the document.
+   * Chunks are processed in parallel with bounded concurrency for HTTP requests.
    */
   private async downloadSectionWithFoliateTTS(
     bookHash: string,
@@ -148,8 +150,16 @@ class OfflineAudioManager extends EventTarget {
     signal?: AbortSignal,
     skipCompletion?: boolean,
   ): Promise<void> {
-    const allMarkMetadata: MarkTimingInfo[] = [];
-    let cumulativeAudioOffset = 0;
+    const CONCURRENCY = 5;
+
+    // Step 1: Pre-process all chunks (SSML parsing, mark extraction — cheap, no network)
+    const preparedChunks: Array<{
+      chunkIndex: number;
+      blockIndex: number;
+      ssml: string;
+      plainText: string;
+      marks: TTSMark[];
+    }> = [];
     let totalPlainText = '';
 
     for (let chunkIndex = 0; chunkIndex < ssmlChunks.length; chunkIndex++) {
@@ -159,13 +169,8 @@ class OfflineAudioManager extends EventTarget {
       const chunk = ssmlChunks[chunkIndex]!;
       const { ssml: rawSSML, blockIndex } = chunk;
 
-      // Preprocess SSML to match TTSController's preprocessing
       const ssml = this.preprocessSSML(rawSSML, targetLang);
-
-      // Parse SSML to get marks and plain text
       const { plainText: rawPlainText, marks } = parseSSMLMarks(ssml, lang);
-
-      // Normalize whitespace for consistent matching
       const plainText = this.normalizeWhitespace(rawPlainText);
 
       if (!plainText || marks.length === 0) {
@@ -174,25 +179,37 @@ class OfflineAudioManager extends EventTarget {
       }
 
       totalPlainText += plainText;
+      preparedChunks.push({ chunkIndex, blockIndex, ssml, plainText, marks });
+    }
 
-      console.log(`[OfflineAudioManager] Processing chunk ${chunkIndex} (block ${blockIndex}):`, {
-        marksCount: marks.length,
-        textLength: plainText.length,
-        firstMark: marks[0]?.name,
-      });
+    if (preparedChunks.length === 0) return;
 
-      try {
-        // Select appropriate provider based on voice ID
-        let currentProvider = this.provider;
+    // Step 2: Process chunks in parallel with bounded concurrency
+    interface ChunkResult {
+      duration: number;
+      marks: TTSMark[];
+      plainText: string;
+      size: number;
+    }
+
+    let completedCount = 0;
+
+    const results = await runWithConcurrency(
+      preparedChunks,
+      CONCURRENCY,
+      async (prepared): Promise<ChunkResult> => {
+        if (signal?.aborted) throw new Error('Download cancelled');
+
+        console.log(`[OfflineAudioManager] Processing chunk ${prepared.chunkIndex} (block ${prepared.blockIndex}):`, {
+          marksCount: prepared.marks.length,
+          textLength: prepared.plainText.length,
+          firstMark: prepared.marks[0]?.name,
+        });
+
         const isKokoro = KOKORO_VOICES.some((v) => v.id === voiceId);
-        if (isKokoro) {
-          currentProvider = this.httpProvider;
-        } else {
-          currentProvider = this.edgeProvider;
-        }
+        const currentProvider = isKokoro ? this.httpProvider : this.edgeProvider;
 
-        // Generate audio for the entire chunk's plain text via provider
-        const bufferOrBlob = await currentProvider.synthesize(plainText, {
+        const bufferOrBlob = await currentProvider.synthesize(prepared.plainText, {
           lang,
           voice: voiceId,
           rate,
@@ -205,40 +222,12 @@ class OfflineAudioManager extends EventTarget {
           bufferOrBlob instanceof Blob ? await bufferOrBlob.arrayBuffer() : bufferOrBlob;
         const audioBlob = new Blob([arrayBuffer], { type: 'audio/mpeg' });
 
-        // Convert to base64 for IndexedDB storage (iOS compatibility)
         const base64Audio = await this.blobToBase64(audioBlob);
-
-        // Get audio duration
         const chunkDuration = await getAudioDuration(audioBlob);
 
-        // Create timing metadata for each mark in this chunk
-        // Distribute duration proportionally across marks based on text length
-        const totalChars = marks.reduce((sum, m) => sum + m.text.length, 0);
-        let markOffset = cumulativeAudioOffset;
+        if (signal?.aborted) throw new Error('Download cancelled');
 
-        for (const mark of marks) {
-          const markDuration = (mark.text.length / Math.max(totalChars, 1)) * chunkDuration;
-          allMarkMetadata.push({
-            name: mark.name,
-            text: mark.text,
-            language: mark.language,
-            offset: mark.offset,
-            audioOffset: markOffset,
-            duration: markDuration,
-          });
-          markOffset += markDuration;
-        }
-
-        cumulativeAudioOffset += chunkDuration;
-
-        // Store audio chunk with unique href per block
-        const chunkHref = `${href}#block-${blockIndex}`;
-        // console.log('[OfflineAudioManager] Saving audio chunk:', {
-        //   bookHash,
-        //   href: chunkHref,
-        //   voiceId,
-        // });
-
+        const chunkHref = `${href}#block-${prepared.blockIndex}`;
         await offlineAudioStorage.saveAudio({
           bookHash,
           href: chunkHref,
@@ -247,17 +236,59 @@ class OfflineAudioManager extends EventTarget {
           durationMs: chunkDuration,
           rate,
           pitch,
-          text: plainText,
-          ssml: ssml,
+          text: prepared.plainText,
+          ssml: prepared.ssml,
           size: audioBlob.size,
           downloadedAt: Date.now(),
         });
 
-        onProgress?.(chunkIndex + 1, ssmlChunks.length);
-      } catch (error) {
-        console.error(`Error downloading audio for chunk ${chunkIndex}:`, error);
-        throw error;
+        completedCount++;
+        onProgress?.(completedCount, preparedChunks.length);
+
+        return {
+          duration: chunkDuration,
+          marks: prepared.marks,
+          plainText: prepared.plainText,
+          size: audioBlob.size,
+        };
+      },
+      signal,
+    );
+
+    if (signal?.aborted) throw new Error('Download cancelled');
+
+    const errors = results.filter((r): r is { item: (typeof preparedChunks)[number]; error: unknown } => 'error' in r);
+    if (errors.length > 0) {
+      const firstError = errors[0]!.error;
+      throw firstError instanceof Error ? firstError : new Error(String(firstError));
+    }
+
+    // Step 3: Process results in original order for cumulative offsets and mark metadata
+    const orderedResults = (
+      results as { item: (typeof preparedChunks)[number]; result: ChunkResult }[]
+    ).sort((a, b) => a.item.chunkIndex - b.item.chunkIndex);
+
+    const allMarkMetadata: MarkTimingInfo[] = [];
+    let cumulativeAudioOffset = 0;
+
+    for (const { item, result } of orderedResults) {
+      const totalChars = result.marks.reduce((sum, m) => sum + m.text.length, 0);
+      let markOffset = cumulativeAudioOffset;
+
+      for (const mark of result.marks) {
+        const markDuration = (mark.text.length / Math.max(totalChars, 1)) * result.duration;
+        allMarkMetadata.push({
+          name: mark.name,
+          text: mark.text,
+          language: mark.language,
+          offset: mark.offset,
+          audioOffset: markOffset,
+          duration: markDuration,
+        });
+        markOffset += markDuration;
       }
+
+      cumulativeAudioOffset += result.duration;
     }
 
     // Generate content hash for validation
@@ -279,7 +310,7 @@ class OfflineAudioManager extends EventTarget {
     // Mark section as complete (skip for boundary sections — the completion
     // will be added when the owning TOC entry is explicitly downloaded)
     if (!skipCompletion) {
-      await offlineAudioStorage.markSectionComplete(bookHash, href, voiceId, ssmlChunks.length);
+      await offlineAudioStorage.markSectionComplete(bookHash, href, voiceId, preparedChunks.length);
     }
   }
 
