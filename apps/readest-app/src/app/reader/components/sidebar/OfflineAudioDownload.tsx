@@ -170,7 +170,16 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
       const status = await offlineAudioManager.getStatus(bookId, '');
       setIsDownloading(status.inProgress);
       if (status.inProgress && status.progress) {
-        setDownloadProgress(status.progress);
+        setDownloadProgress((prev) => {
+          if (
+            prev &&
+            prev.inProgress &&
+            prev.downloadedSections >= status.progress!.downloadedSections
+          ) {
+            return prev;
+          }
+          return status.progress;
+        });
         if (status.progress.sectionHrefs) {
           setSelection(new Set(status.progress.sectionHrefs));
         }
@@ -262,7 +271,6 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
     bookDoc,
     bookId,
     ttsLang,
-    selection,
     currentSectionHref,
     downloadedVoiceId,
     viewSettings,
