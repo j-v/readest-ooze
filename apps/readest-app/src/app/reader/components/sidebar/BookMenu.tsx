@@ -166,7 +166,6 @@ const BookMenu: React.FC<BookMenuProps> = ({ menuClassName, setIsDropdownOpen })
         ))}
       <hr className='border-base-200 my-1' />
       <MenuItem label={_('Offline Audio')} Icon={MdDownload} onClick={handleShowOfflineAudio} />
-      <hr className='border-base-200 my-1' />
       {(settings.kosync.enabled || settings.readwise.enabled || settings.hardcover.enabled) && (
         <hr aria-hidden='true' className='border-base-200 my-1' />
       )}
