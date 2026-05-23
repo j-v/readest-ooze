@@ -50,12 +50,13 @@ export interface DownloadProgress {
   startedAt?: number;
   completedAt?: number;
   lastError?: string;
+  totalSize?: number;
 }
 
 export interface SectionCompletion {
-  id: string; // composite key: `${bookHash}:${href}:${voiceId}`
+  id: string;
   bookHash: string;
-  href: string; // base href without chunk suffix
+  href: string;
   voiceId: string;
   isComplete: boolean;
   totalChunks: number;
@@ -296,6 +297,11 @@ class OfflineAudioStorage {
   async getTotalSize(bookHash?: string): Promise<number> {
     if (!this.db) await this.init();
 
+    if (bookHash) {
+      const progress = await this.getProgress(bookHash);
+      if (progress?.totalSize != null) return progress.totalSize;
+    }
+
     return new Promise((resolve, reject) => {
       const transaction = this.db!.transaction([AUDIO_STORE], 'readonly');
       const store = transaction.objectStore(AUDIO_STORE);
@@ -316,12 +322,32 @@ class OfflineAudioStorage {
           totalSize += record.size || 0;
           cursor.continue();
         } else {
+          if (bookHash) {
+            this.getProgress(bookHash)
+              .then((progress) => {
+                if (progress) {
+                  progress.totalSize = totalSize;
+                  this.saveProgress(progress).catch(() => {});
+                }
+              })
+              .catch(() => {});
+          }
           resolve(totalSize);
         }
       };
 
       request.onerror = () => reject(request.error);
     });
+  }
+
+  async invalidateTotalSizeCache(bookHash: string): Promise<void> {
+    if (!this.db) await this.init();
+
+    const progress = await this.getProgress(bookHash);
+    if (progress) {
+      delete progress.totalSize;
+      await this.saveProgress(progress);
+    }
   }
 
   async markSectionComplete(
@@ -385,6 +411,20 @@ class OfflineAudioStorage {
         const hrefs = new Set(completions.filter((c) => c.isComplete).map((c) => c.href));
         resolve(hrefs);
       };
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async getCompletions(bookHash: string): Promise<SectionCompletion[]> {
+    if (!this.db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([COMPLETION_STORE], 'readonly');
+      const store = transaction.objectStore(COMPLETION_STORE);
+      const index = store.index('bookHash');
+      const request = index.getAll(bookHash);
+
+      request.onsuccess = () => resolve(request.result || []);
       request.onerror = () => reject(request.error);
     });
   }

@@ -22,7 +22,7 @@ const SidebarDownloadIndicator: React.FC<SidebarDownloadIndicatorProps> = ({ boo
   useEffect(() => {
     const checkStatus = async () => {
       try {
-        const status = await offlineAudioManager.getStatus(bookHash, '');
+        const status = await offlineAudioManager.getStatus(bookHash);
         setIsDownloading(status.inProgress);
 
         // If it's not in progress, check if there was a recorded error in the last progress

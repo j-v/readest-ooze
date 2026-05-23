@@ -4,8 +4,12 @@
  */
 
 import { TOCItem, BookDoc, SectionItem } from '@/libs/document';
-import { offlineAudioStorage, DownloadProgress, MarkTimingInfo } from './OfflineAudioStorage';
-import TTSProvider from './providers/TTSProvider';
+import {
+  offlineAudioStorage,
+  DownloadProgress,
+  MarkTimingInfo,
+  SectionCompletion,
+} from './OfflineAudioStorage';
 import EdgeTTSProvider from './providers/EdgeTTSProvider';
 import HttpTTSProvider from './providers/HttpTTSProvider';
 import { EdgeSpeechTTS } from '@/libs/edgeTTS';
@@ -39,7 +43,6 @@ export interface DownloadStatus {
 }
 
 class OfflineAudioManager extends EventTarget {
-  private provider: TTSProvider; // Default/current provider
   private edgeProvider: EdgeTTSProvider;
   private httpProvider: HttpTTSProvider;
   private activeDownloads = new Map<string, AbortController>();
@@ -55,7 +58,6 @@ class OfflineAudioManager extends EventTarget {
       endpoint,
       timeoutMs: 30000,
     });
-    this.provider = this.edgeProvider;
 
     let currentEndpoint = endpoint;
     // Subscribe to settings changes to update provider
@@ -135,6 +137,8 @@ class OfflineAudioManager extends EventTarget {
    * Download audio for a section using Foliate TTS-generated SSML chunks.
    * Each SSML chunk corresponds to a block/paragraph in the document.
    * Chunks are processed in parallel with bounded concurrency for HTTP requests.
+   *
+   * Returns size of section to download
    */
   private async downloadSectionWithFoliateTTS(
     bookHash: string,
@@ -149,7 +153,7 @@ class OfflineAudioManager extends EventTarget {
     onProgress?: (downloaded: number, total: number) => void,
     signal?: AbortSignal,
     skipCompletion?: boolean,
-  ): Promise<void> {
+  ): Promise<number> {
     const CONCURRENCY = 5;
 
     // Step 1: Pre-process all chunks (SSML parsing, mark extraction — cheap, no network)
@@ -182,7 +186,7 @@ class OfflineAudioManager extends EventTarget {
       preparedChunks.push({ chunkIndex, blockIndex, ssml, plainText, marks });
     }
 
-    if (preparedChunks.length === 0) return;
+    if (preparedChunks.length === 0) return 0;
 
     // Step 2: Process chunks in parallel with bounded concurrency
     interface ChunkResult {
@@ -200,11 +204,14 @@ class OfflineAudioManager extends EventTarget {
       async (prepared): Promise<ChunkResult> => {
         if (signal?.aborted) throw new Error('Download cancelled');
 
-        console.log(`[OfflineAudioManager] Processing chunk ${prepared.chunkIndex} (block ${prepared.blockIndex}):`, {
-          marksCount: prepared.marks.length,
-          textLength: prepared.plainText.length,
-          firstMark: prepared.marks[0]?.name,
-        });
+        console.log(
+          `[OfflineAudioManager] Processing chunk ${prepared.chunkIndex} (block ${prepared.blockIndex}):`,
+          {
+            marksCount: prepared.marks.length,
+            textLength: prepared.plainText.length,
+            firstMark: prepared.marks[0]?.name,
+          },
+        );
 
         const isKokoro = KOKORO_VOICES.some((v) => v.id === voiceId);
         const currentProvider = isKokoro ? this.httpProvider : this.edgeProvider;
@@ -257,7 +264,9 @@ class OfflineAudioManager extends EventTarget {
 
     if (signal?.aborted) throw new Error('Download cancelled');
 
-    const errors = results.filter((r): r is { item: (typeof preparedChunks)[number]; error: unknown } => 'error' in r);
+    const errors = results.filter(
+      (r): r is { item: (typeof preparedChunks)[number]; error: unknown } => 'error' in r,
+    );
     if (errors.length > 0) {
       const firstError = errors[0]!.error;
       throw firstError instanceof Error ? firstError : new Error(String(firstError));
@@ -271,7 +280,7 @@ class OfflineAudioManager extends EventTarget {
     const allMarkMetadata: MarkTimingInfo[] = [];
     let cumulativeAudioOffset = 0;
 
-    for (const { item, result } of orderedResults) {
+    for (const { result } of orderedResults) {
       const totalChars = result.marks.reduce((sum, m) => sum + m.text.length, 0);
       let markOffset = cumulativeAudioOffset;
 
@@ -312,6 +321,9 @@ class OfflineAudioManager extends EventTarget {
     if (!skipCompletion) {
       await offlineAudioStorage.markSectionComplete(bookHash, href, voiceId, preparedChunks.length);
     }
+
+    const totalSectionSize = orderedResults.reduce((sum, { result }) => sum + result.size, 0);
+    return totalSectionSize;
   }
 
   /**
@@ -504,6 +516,7 @@ class OfflineAudioManager extends EventTarget {
         (sum, entry) => sum + entry.spineSections.length,
         0,
       );
+      const existingProgress = await offlineAudioStorage.getProgress(bookHash);
       const progress: DownloadProgress = {
         bookHash,
         totalSections: totalSpineSections,
@@ -512,6 +525,7 @@ class OfflineAudioManager extends EventTarget {
         inProgress: true,
         sectionHrefs: sections.map((s) => s.href || '').filter(Boolean),
         startedAt: Date.now(),
+        totalSize: existingProgress?.totalSize ?? 0,
       };
 
       // Count already downloaded spine sections for initial progress
@@ -560,6 +574,7 @@ class OfflineAudioManager extends EventTarget {
             // Generate SSML from the spine section's document using the clean section ID
             const ssmlChunks = await generateSSMLChunksForSection(bookDoc, sectionId, granularity);
 
+            let sectionSize = 0;
             if (ssmlChunks.length > 0) {
               console.log('[OfflineAudioManager] Downloading section', {
                 tocLabel: label,
@@ -578,7 +593,7 @@ class OfflineAudioManager extends EventTarget {
                 }),
               );
 
-              await this.downloadSectionWithFoliateTTS(
+              sectionSize = await this.downloadSectionWithFoliateTTS(
                 bookHash,
                 sectionId,
                 ssmlChunks,
@@ -612,6 +627,7 @@ class OfflineAudioManager extends EventTarget {
 
             sectionsCompletedCount++;
             progress.downloadedSections = sectionsCompletedCount;
+            progress.totalSize = (progress.totalSize || 0) + sectionSize;
             existingDownloads.add(sectionId);
             await offlineAudioStorage.saveProgress(progress);
             onProgress?.(progress);
@@ -747,15 +763,45 @@ class OfflineAudioManager extends EventTarget {
   /**
    * Get download status for a book
    */
-  async getStatus(bookHash: string, voiceId: string): Promise<DownloadStatus> {
-    const progress = await offlineAudioStorage.getProgress(bookHash);
-    const downloadedHrefs = await offlineAudioStorage.getCompletedSections(bookHash, voiceId);
+  async getStatus(bookHash: string): Promise<DownloadStatus> {
+    const [progress, downloadedHrefs] = await Promise.all([
+      offlineAudioStorage.getProgress(bookHash),
+      offlineAudioStorage.getAllDownloadedSections(bookHash),
+    ]);
 
     return {
       inProgress: this.activeDownloads.has(bookHash),
       progress,
       downloadedHrefs,
     };
+  }
+
+  /**
+   * Get all offline audio data needed for dialog initialization in a single batch.
+   * Runs IndexedDB reads in parallel to minimize latency.
+   */
+  async getBatchInitData(bookHash: string): Promise<{
+    progress: DownloadProgress | null;
+    inProgress: boolean;
+    downloadedHrefs: Set<string>;
+    bookVoiceId: string | null;
+    totalSize: number;
+    completions: SectionCompletion[];
+  }> {
+    await this.init();
+
+    const [progress, completions, totalSize] = await Promise.all([
+      offlineAudioStorage.getProgress(bookHash),
+      offlineAudioStorage.getCompletions(bookHash),
+      offlineAudioStorage.getTotalSize(bookHash),
+    ]);
+
+    const inProgress = this.activeDownloads.has(bookHash);
+    const completed = completions.filter((c) => c.isComplete);
+    const downloadedHrefs = new Set(completed.map((c) => c.href));
+    const bookVoiceId = completed.length > 0 ? completed[0]!.voiceId : null;
+
+    return { progress, inProgress, downloadedHrefs, bookVoiceId, totalSize, completions };
   }
 
   /**
@@ -799,6 +845,9 @@ class OfflineAudioManager extends EventTarget {
 
     // Delete completion status
     await offlineAudioStorage.deleteSectionCompletion(bookHash, sectionId, voiceId);
+
+    // Invalidate totalSize cache so it's recalculated on next request
+    await offlineAudioStorage.invalidateTotalSizeCache(bookHash);
 
     this.dispatchEvent(
       new CustomEvent('section-download-deleted', {

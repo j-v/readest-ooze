@@ -165,39 +165,36 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
   // Load Status
   const loadStatus = useCallback(async () => {
     try {
-      await offlineAudioManager.init();
-
-      const status = await offlineAudioManager.getStatus(bookId, '');
-      setIsDownloading(status.inProgress);
-      if (status.inProgress && status.progress) {
+      const data = await offlineAudioManager.getBatchInitData(bookId);
+      setIsDownloading(data.inProgress);
+      if (data.inProgress && data.progress) {
         setDownloadProgress((prev) => {
           if (
             prev &&
             prev.inProgress &&
-            prev.downloadedSections >= status.progress!.downloadedSections
+            prev.downloadedSections >= data.progress!.downloadedSections
           ) {
             return prev;
           }
-          return status.progress;
+          return data.progress;
         });
-        if (status.progress.sectionHrefs) {
-          setSelection(new Set(status.progress.sectionHrefs));
+        if (data.progress.sectionHrefs) {
+          setSelection(new Set(data.progress.sectionHrefs));
         }
       } else if (
-        !status.inProgress &&
-        status.progress?.lastError &&
-        status.progress.lastError !== 'Download cancelled'
+        !data.inProgress &&
+        data.progress?.lastError &&
+        data.progress.lastError !== 'Download cancelled'
       ) {
         setError('Failed to download audio, check your network connection');
       }
 
-      const dHrefs = await offlineAudioManager.getAllDownloadedSections(bookId);
-      setDownloadedHrefs(dHrefs);
-
-      const size = await offlineAudioManager.getTotalSize(bookId);
-      setTotalSize(size);
+      setDownloadedHrefs(data.downloadedHrefs);
+      setTotalSize(data.totalSize);
+      return data;
     } catch (err) {
       console.error('Error loading offline audio status:', err);
+      return null;
     }
   }, [bookId]);
 
@@ -206,19 +203,20 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
     let isMounted = true;
     const loadVoicesAndSetDefault = async () => {
       if (!bookDoc) return;
-      await loadStatus();
-      if (!isMounted) return;
+      const data = await loadStatus();
+      if (!isMounted || !data) return;
 
-      // Determine active chapter for voice context
       const firstSelectionHref = Array.from(selection)[0];
       const activeHref = firstSelectionHref || currentSectionHref || flatTOC[0]?.item?.href;
 
-      let chapterVoiceId: string | null = null;
-      if (activeHref) {
-        chapterVoiceId = await offlineAudioManager.getDownloadedVoiceForSection(bookId, activeHref);
-      }
+      const baseHref = activeHref?.split('#')[0] || activeHref;
+      const chapterVoiceId =
+        data.completions?.find((c) => {
+          const cb = c.href.split('#')[0] || c.href;
+          return cb === baseHref && c.isComplete;
+        })?.voiceId ?? null;
 
-      const bookDownloadedVoiceId = await offlineAudioManager.getDownloadedVoice(bookId);
+      const bookDownloadedVoiceId = data.bookVoiceId;
 
       // 1. Get current language context
       const groups = await offlineAudioManager.getVoices(ttsLang);
@@ -257,6 +255,7 @@ const OfflineAudioDownload: React.FC<OfflineAudioDownloadProps> = ({ bookKey, on
         if (engineFallback) return engineFallback;
 
         // G. Hardcoded absolute fallback
+        // TODO only works with Kokoro, need alternative?
         return 'en-US-AriaNeural';
       });
       setIsInitialized(true);
